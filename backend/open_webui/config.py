@@ -1130,31 +1130,36 @@ except Exception as e:
 if default_prompt_suggestions == []:
     default_prompt_suggestions = [
         {
-            "title": ["Help me study", "vocabulary for a college entrance exam"],
-            "content": "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+            "title": ["დამეხმარე", "სწავლის პროცესში"],
+            "content": "დამეხმარე უნივერსიტეტის გამოცდისთვის მომზადებაში და ტესტური კითხვების შექმნაში",
         },
         {
-            "title": ["Give me ideas", "for what to do with my kids' art"],
-            "content": "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+            "title": ["დაწერე კოდი", "დამიწერე სკრიპტი Python-ში"],
+            "content": "დამიწერე Python სკრიპტი რომელიც მონაცემების დამუშავებას გააკეთებს",
         },
         {
-            "title": ["Tell me a fun fact", "about the Roman Empire"],
-            "content": "Tell me a random fun fact about the Roman Empire",
+            "title": ["ახსენი", "რთული კონცეპტი"],
+            "content": "ამიხსენი მარტივი ენით როგორ მუშაობს ხელოვნური ინტელექტი",
         },
         {
-            "title": ["Show me a code snippet", "of a website's sticky header"],
-            "content": "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
+            "title": ["მომეცი რჩევა", "რჩევა მჭირდება პროდუქტიულობისთვის"],
+            "content": "როგორ შემიძლია უკეთ მოვაწყო დრო და გავზარდო პროდუქტიულობა?",
         },
         {
-            "title": [
-                "Explain options trading",
-                "if I'm familiar with buying and selling stocks",
-            ],
-            "content": "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
+            "title": ["გამიზიარე", "რაიმე საინტერესო ფაქტი"],
+            "content": "მომიყევი რაიმე საინტერესო ფაქტი საქართველოს ან მსოფლიო ისტორიიდან",
         },
         {
-            "title": ["Overcome procrastination", "give me tips"],
-            "content": "Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?",
+            "title": ["შექმენი", "დამიწერე ბიზნეს იდეა"],
+            "content": "დამეხმარე ინოვაციური ბიზნეს იდეის შემუშავებაში და განვითარებაში",
+        },
+        {
+            "title": ["თარგმნე", "სტატია ან ტექსტი"],
+            "content": "დამთარგმნე ეს ტექსტი ერთი ენიდან მეორეში ზუსტად და პროფესიონალურად",
+        },
+        {
+            "title": ["შეამოწმე", "კოდში შეცდომები"],
+            "content": "შეამოწმე ეს კოდი და იპოვე შესაძლო შეცდომები ან გამოსასწორებელი ნაწილები",
         },
     ]
 
