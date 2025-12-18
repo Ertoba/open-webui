@@ -63,9 +63,10 @@
 	import GlobeAlt from '../icons/GlobeAlt.svelte';
 	import Photo from '../icons/Photo.svelte';
 	import Download from '../icons/Download.svelte';
-	import SoundHigh from '../icons/SoundHigh.svelte';
+	import MusicalNote from '../icons/MusicalNote.svelte';
 	import Camera from '../icons/Camera.svelte';
 	import Video from '../icons/Video.svelte';
+	import DocumentArrowDown from '../icons/DocumentArrowDown.svelte';
 	import Wrench from '../icons/Wrench.svelte';
 	import CommandLine from '../icons/CommandLine.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
@@ -124,6 +125,8 @@
 	export let videoEnabled = false;
 	export let videoUnavailableMessage = '';
 
+	export let pdfEnabled = false;
+
 	let showInputVariablesModal = false;
 	let inputVariablesModalCallback = (variableValues) => {};
 	let inputVariables = {};
@@ -158,7 +161,8 @@
 		downloadVoiceVoice,
 		musicEnabled,
 		videoEnabled,
-		pyPhotoEnabled
+		pyPhotoEnabled,
+		pdfEnabled
 	});
 
 	const inputVariableHandler = async (text: string): Promise<string> => {
@@ -1479,6 +1483,7 @@
 										bind:pyPhotoEnabled
 										bind:videoEnabled
 										bind:videoUnavailableMessage
+										bind:pdfEnabled
 										closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
 										onShowValves={(e) => {
 											const { type, id } = e;
@@ -1681,7 +1686,7 @@
 														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
 														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
 												>
-													<SoundHigh className="size-4" strokeWidth="1.75" />
+													<MusicalNote className="size-4" strokeWidth="1.75" />
 
 													<div class="hidden group-hover:block">
 														<XMark className="size-4" strokeWidth="1.75" />
@@ -1691,9 +1696,9 @@
 										{/if}
 
 										{#if pyPhotoEnabled}
-											<Tooltip content="PY ფოტო" placement="top">
+											<Tooltip content={$i18n.t('PY Photo')} placement="top">
 												<button
-													aria-label="Disable PY ფოტო"
+													aria-label={$i18n.t('Disable PY Photo')}
 													aria-pressed={pyPhotoEnabled}
 													on:click|preventDefault={() => (pyPhotoEnabled = false)}
 													type="button"
@@ -1711,9 +1716,9 @@
 										{/if}
 
 										{#if videoEnabled}
-											<Tooltip content="ვიდეო" placement="top">
+											<Tooltip content={$i18n.t('Video')} placement="top">
 												<button
-													aria-label="Disable ვიდეო"
+													aria-label={$i18n.t('Disable Video')}
 													aria-pressed={videoEnabled}
 													on:click|preventDefault={() => {
 														videoEnabled = false;
@@ -1725,6 +1730,28 @@
 														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
 												>
 <Video className="size-4" strokeWidth="1.75"></Video>
+
+													<div class="hidden group-hover:block">
+														<XMark className="size-4" strokeWidth="1.75" />
+													</div>
+												</button>
+											</Tooltip>
+										{/if}
+
+										{#if pdfEnabled}
+											<Tooltip content={$i18n.t('PDF Generator')} placement="top">
+												<button
+													aria-label={$i18n.t('Disable PDF Generator')}
+													aria-pressed={pdfEnabled}
+													on:click|preventDefault={() => {
+														pdfEnabled = false;
+													}}
+													type="button"
+													class="group p-[7px] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {pdfEnabled
+														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
+														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
+												>
+													<DocumentArrowDown className="size-4" strokeWidth="1.75" />
 
 													<div class="hidden group-hover:block">
 														<XMark className="size-4" strokeWidth="1.75" />

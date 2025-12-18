@@ -6,6 +6,7 @@ export type PyPhotoGenerateResponse = {
 	data_url: string;
 	view_url: string;
 	download_url: string;
+	file_id?: string | null;
 };
 
 export const generatePyPhoto = async (
@@ -37,4 +38,3 @@ export const generatePyPhoto = async (
 	if (error) throw error;
 	return res;
 };
-

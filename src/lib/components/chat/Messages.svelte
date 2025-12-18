@@ -53,6 +53,7 @@
 	export let downloadVoiceUnavailableMessage = '';
 
 	export let pyPhotoEnabled = false;
+	export let pdfEnabled = false;
 
 	export let readOnly = false;
 	export let editCodeBlock = true;
@@ -474,6 +475,7 @@
 								{downloadVoiceVoice}
 								{downloadVoiceUnavailableMessage}
 								{pyPhotoEnabled}
+								{pdfEnabled}
 								messageId={message.id}
 								idx={messageIdx}
 								{user}

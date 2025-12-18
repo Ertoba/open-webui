@@ -72,45 +72,43 @@
 	aria-label="New Chat"
 />
 
-<nav
-	class="sticky top-0 z-30 w-full {chat?.id
-		? 'pt-0.5 pb-1'
-		: 'pt-1 pb-1'} -mb-12 flex flex-col items-center drag-region"
->
-	<div class="flex items-center w-full pl-1.5 pr-1">
-		<div
-			id="navbar-bg-gradient-to-b"
-			class="{chat?.id
-				? 'visible'
-				: 'invisible'} bg-linear-to-b via-40% to-97% from-white/90 via-white/50 to-transparent dark:from-gray-900/90 dark:via-gray-900/50 dark:to-transparent pointer-events-none absolute inset-0 -bottom-10 z-[-1]"
-		></div>
+	<nav
+		class="sticky top-0 z-30 w-full {chat?.id
+			? 'pt-0 pb-0'
+			: 'pt-0 pb-0'} -mb-1 flex flex-col items-center drag-region"
+	>
+		<div class="flex items-center w-full pl-1.5 pr-1">
+			<div
+				id="navbar-bg-gradient-to-b"
+				class="bg-linear-to-b via-40% to-97% from-white/98 via-white/96 to-white/94 dark:from-gray-900/98 dark:via-gray-900/96 dark:to-gray-900/94 backdrop-blur-lg pointer-events-none absolute inset-0 -bottom-1 z-[-1]"
+			></div>
 
-		<div class=" flex max-w-full w-full mx-auto px-1.5 md:px-2 pt-0.5 bg-transparent">
-			<div class="flex items-center w-full max-w-full">
-				{#if $mobile && !$showSidebar}
-					<div
-						class="-translate-x-0.5 mr-1 mt-1 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
-					>
+			<div class=" flex max-w-full w-full mx-auto px-1 md:px-1.5 pt-0 bg-transparent">
+				<div class="flex items-center w-full max-w-full">
+					{#if $mobile && !$showSidebar}
+						<div
+							class="-translate-x-0.5 mr-1 mt-0.5 self-start flex flex-none items-center text-gray-600 dark:text-gray-400"
+						>
 						<Tooltip content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}>
 							<button
-								class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
-								on:click={() => {
-									showSidebar.set(!$showSidebar);
-								}}
-							>
-								<div class=" self-center p-1.5">
-									<Sidebar />
-								</div>
-							</button>
-						</Tooltip>
-					</div>
+									class=" cursor-pointer flex rounded-lg hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+									on:click={() => {
+										showSidebar.set(!$showSidebar);
+									}}
+								>
+									<div class=" self-center p-1">
+										<Sidebar />
+									</div>
+								</button>
+							</Tooltip>
+						</div>
 				{/if}
 
-				<div
-					class="flex-1 overflow-hidden max-w-full py-0.5
-			{$showSidebar ? 'ml-1' : ''}
-			"
-				>
+					<div
+						class="flex-1 overflow-hidden max-w-full py-0
+				{$showSidebar ? 'ml-1' : ''}
+				"
+					>
 					{#if showModelSelector}
 						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
 					{/if}
@@ -121,11 +119,11 @@
 
 					{#if $user && ($user?.role === 'admin' || ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false))}
 						{#if !chat?.id}
-							<Tooltip content={$i18n.t(`Temporary Chat`)}>
-								<button
-									class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hoverbg-gray-850 transition"
-									id="temporary-chat-button"
-									on:click={async () => {
+								<Tooltip content={$i18n.t(`Temporary Chat`)}>
+									<button
+										class="flex cursor-pointer px-1.5 py-1 rounded-xl hover:bg-gray-50 dark:hoverbg-gray-850 transition"
+										id="temporary-chat-button"
+										on:click={async () => {
 										if (($settings?.temporaryChatByDefault ?? false) && $temporaryChatEnabled) {
 											// for proper initNewChat handling
 											await temporaryChatEnabled.set(null);
@@ -153,11 +151,11 @@
 								</button>
 							</Tooltip>
 						{:else if $temporaryChatEnabled}
-							<Tooltip content={$i18n.t(`Save Chat`)}>
-								<button
-									class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-									id="save-temporary-chat-button"
-									on:click={async () => {
+								<Tooltip content={$i18n.t(`Save Chat`)}>
+									<button
+										class="flex cursor-pointer px-1.5 py-1 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+										id="save-temporary-chat-button"
+										on:click={async () => {
 										onSaveTempChat();
 									}}
 								>
@@ -170,14 +168,14 @@
 					{/if}
 
 					{#if $mobile && !$temporaryChatEnabled && chat && chat.id}
-						<Tooltip content={$i18n.t('New Chat')}>
-							<button
-								class=" flex {$showSidebar
-									? 'md:hidden'
-									: ''} cursor-pointer px-2 py-2 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								on:click={() => {
-									initNewChat();
-								}}
+							<Tooltip content={$i18n.t('New Chat')}>
+								<button
+									class=" flex {$showSidebar
+										? 'md:hidden'
+										: ''} cursor-pointer px-1.5 py-1 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+									on:click={() => {
+										initNewChat();
+									}}
 								aria-label="New Chat"
 							>
 								<div class=" m-auto self-center">
@@ -198,11 +196,11 @@
 								archiveChatHandler(chat.id);
 							}}
 							{moveChatHandler}
-						>
-							<button
-								class="flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								id="chat-context-menu-button"
 							>
+								<button
+									class="flex cursor-pointer px-1.5 py-1 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+									id="chat-context-menu-button"
+								>
 								<div class=" m-auto self-center">
 									<EllipsisHorizontal className=" size-5" strokeWidth="1.5" />
 								</div>
@@ -212,12 +210,12 @@
 
 					{#if false}
 						<!-- Chat Controls temporarily disabled -->
-						<Tooltip content={$i18n.t('Controls')}>
-							<button
-								class=" flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								on:click={async () => {
-									await showControls.set(!$showControls);
-								}}
+							<Tooltip content={$i18n.t('Controls')}>
+								<button
+									class=" flex cursor-pointer px-1.5 py-1 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+									on:click={async () => {
+										await showControls.set(!$showControls);
+									}}
 								aria-label="Controls"
 							>
 								<div class=" m-auto self-center">
@@ -237,18 +235,18 @@
 									showArchivedChats.set(true);
 								}
 							}}
-						>
-							<div
-								class="select-none flex rounded-xl p-1.5 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 							>
-								<div class=" self-center">
-									<span class="sr-only">{$i18n.t('User menu')}</span>
-									<img
-										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
-										class="size-6 object-cover rounded-full"
-										alt=""
-										draggable="false"
-									/>
+								<div
+									class="select-none flex rounded-xl p-1 w-full hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								>
+									<div class=" self-center">
+										<span class="sr-only">{$i18n.t('User menu')}</span>
+										<img
+											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+											class="size-5.5 object-cover rounded-full"
+											alt=""
+											draggable="false"
+										/>
 								</div>
 							</div>
 						</UserMenu>

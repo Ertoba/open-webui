@@ -240,6 +240,7 @@ export type VoiceGenerateResponse = {
 	play_url: string;
 	download_url: string;
 	charged: boolean;
+	file_id?: string | null;
 };
 
 export const generateVoice = async (

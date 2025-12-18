@@ -65,6 +65,8 @@
 	export let videoEnabled = false;
 	export let videoUnavailableMessage = '';
 
+	export let pdfEnabled = false;
+
 	export let onSelect = (e) => {};
 	export let onChange = (e) => {};
 
@@ -228,6 +230,7 @@
 					bind:pyPhotoEnabled
 					bind:videoEnabled
 					bind:videoUnavailableMessage
+					bind:pdfEnabled
 					bind:atSelectedModel
 					bind:showCommands
 					{toolServers}

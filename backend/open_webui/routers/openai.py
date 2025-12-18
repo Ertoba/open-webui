@@ -143,7 +143,7 @@ async def get_headers_and_cookies(
         **(
             {
                 "HTTP-Referer": "https://openwebui.com/",
-                "X-Title": getattr(request.app.state, "WEBUI_NAME", "Open WebUI"),
+                "X-Title": getattr(request.app.state, "WEBUI_NAME", "აია"),
             }
             if "openrouter.ai" in url
             else {}

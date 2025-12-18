@@ -51,6 +51,7 @@
 	import Folder from '../common/Folder.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Folders from './Sidebar/Folders.svelte';
+	import GeneratedFiles from './Sidebar/GeneratedFiles.svelte';
 	import { getChannels, createNewChannel } from '$lib/apis/channels';
 	import ChannelModal from './Sidebar/ChannelModal.svelte';
 	import ChannelItem from './Sidebar/ChannelItem.svelte';
@@ -1031,6 +1032,16 @@
 						/>
 					</Folder>
 				{/if}
+
+				<Folder
+					id="sidebar-files"
+					className="px-2 mt-0.5"
+					name={$i18n.t('Files')}
+					chevron={false}
+					dragAndDrop={false}
+				>
+					<GeneratedFiles />
+				</Folder>
 
 				<Folder
 					id="sidebar-chats"

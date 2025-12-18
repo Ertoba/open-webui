@@ -34,13 +34,13 @@
 
 <PinnedMessagesModal bind:show={showChannelPinnedMessagesModal} {channel} {onPin} />
 <ChannelInfoModal bind:show={showChannelInfoModal} {channel} {onUpdate} />
-<nav class="sticky top-0 z-30 w-full px-1.5 py-1 -mb-8 flex items-center drag-region flex flex-col">
+<nav class="sticky top-0 z-30 w-full px-1 py-0 -mb-1 flex items-center drag-region flex flex-col">
 	<div
 		id="navbar-bg-gradient-to-b"
-		class=" bg-linear-to-b via-50% from-white via-white to-transparent dark:from-gray-900 dark:via-gray-900 dark:to-transparent pointer-events-none absolute inset-0 -bottom-7 z-[-1]"
+		class="bg-linear-to-b via-50% from-white/98 via-white/96 to-white/94 dark:from-gray-900/98 dark:via-gray-900/96 dark:to-gray-900/94 backdrop-blur-lg pointer-events-none absolute inset-0 -bottom-1 z-[-1]"
 	></div>
 
-	<div class=" flex max-w-full w-full mx-auto px-1 pt-0.5 bg-transparent">
+	<div class=" flex max-w-full w-full mx-auto px-0.5 pt-0 bg-transparent">
 		<div class="flex items-center w-full max-w-full">
 			{#if $mobile}
 				<div
@@ -59,7 +59,7 @@
 								showSidebar.set(!$showSidebar);
 							}}
 						>
-							<div class=" self-center p-1.5">
+							<div class=" self-center p-1">
 								<Sidebar />
 							</div>
 						</button>
@@ -76,18 +76,18 @@
 					<div class="flex items-center gap-0.5 shrink-0">
 						{#if channel?.type === 'dm'}
 							{#if channel?.users}
-								{@const channelMembers = channel.users.filter((u) => u.id !== $user?.id)}
-								<div class="flex mr-1.5 relative">
-									{#each channelMembers.slice(0, 2) as u, index}
-										<img
-											src={`${WEBUI_API_BASE_URL}/users/${u.id}/profile/image`}
-											alt={u.name}
-											class=" size-6.5 rounded-full border-2 border-white dark:border-gray-900 {index ===
-											1
-												? '-ml-3'
-												: ''}"
-										/>
-									{/each}
+									{@const channelMembers = channel.users.filter((u) => u.id !== $user?.id)}
+									<div class="flex mr-1.5 relative">
+										{#each channelMembers.slice(0, 2) as u, index}
+											<img
+												src={`${WEBUI_API_BASE_URL}/users/${u.id}/profile/image`}
+												alt={u.name}
+												class=" size-6 rounded-full border-2 border-white dark:border-gray-900 {index ===
+												1
+													? '-ml-3'
+													: ''}"
+											/>
+										{/each}
 
 									{#if channelMembers.length === 1}
 										<div class="absolute bottom-0 right-0">
@@ -135,14 +135,14 @@
 			</div>
 
 			<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400 gap-1">
-				{#if channel}
-					<Tooltip content={$i18n.t('Pinned Messages')}>
-						<button
-							class=" flex cursor-pointer py-1.5 px-1.5 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-							aria-label="Pinned Messages"
-							type="button"
-							on:click={() => {
-								showChannelPinnedMessagesModal = true;
+					{#if channel}
+						<Tooltip content={$i18n.t('Pinned Messages')}>
+							<button
+								class=" flex cursor-pointer py-1 px-1 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+								aria-label="Pinned Messages"
+								type="button"
+								on:click={() => {
+									showChannelPinnedMessagesModal = true;
 							}}
 						>
 							<div class=" flex items-center gap-0.5 m-auto self-center">
@@ -151,14 +151,14 @@
 						</button>
 					</Tooltip>
 
-					{#if channel?.user_count !== undefined}
-						<Tooltip content={$i18n.t('Users')}>
-							<button
-								class=" flex cursor-pointer py-1 px-1.5 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
-								aria-label="User Count"
-								type="button"
-								on:click={() => {
-									showChannelInfoModal = true;
+						{#if channel?.user_count !== undefined}
+							<Tooltip content={$i18n.t('Users')}>
+								<button
+									class=" flex cursor-pointer py-1 px-1 border dark:border-gray-850 border-gray-50 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+									aria-label="User Count"
+									type="button"
+									on:click={() => {
+										showChannelInfoModal = true;
 								}}
 							>
 								<div class=" flex items-center gap-0.5 m-auto self-center">

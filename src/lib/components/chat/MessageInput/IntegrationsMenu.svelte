@@ -11,6 +11,7 @@
 	import { getVoices, getVoiceStatus, type VoiceStatus } from '$lib/apis/audio';
 	import { getMusicStatus, type MusicStatus } from '$lib/apis/music';
 	import { getVideoStatus, type VideoStatus } from '$lib/apis/video';
+	import { getPdfGeneratorStatus, type PdfGeneratorStatus } from '$lib/apis/pdf_generator';
 
 	import Knobs from '$lib/components/icons/Knobs.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
@@ -23,9 +24,10 @@
 	import Photo from '$lib/components/icons/Photo.svelte';
 	import Terminal from '$lib/components/icons/Terminal.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
-	import SoundHigh from '$lib/components/icons/SoundHigh.svelte';
 	import Camera from '$lib/components/icons/Camera.svelte';
 	import Video from '$lib/components/icons/Video.svelte';
+	import MusicalNote from '$lib/components/icons/MusicalNote.svelte';
+	import DocumentArrowDown from '$lib/components/icons/DocumentArrowDown.svelte';
 	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 
@@ -59,6 +61,13 @@
 	export let videoEnabled = false;
 	export let videoUnavailableMessage = '';
 
+	export let pdfEnabled = false;
+
+	type ActiveGenerationMode = 'music' | 'video' | 'photo' | null;
+	let activeGenerationMode: ActiveGenerationMode = null;
+	$: activeGenerationMode = videoEnabled ? 'video' : musicEnabled ? 'music' : pyPhotoEnabled ? 'photo' : null;
+	$: if (activeGenerationMode && tab !== '') tab = '';
+
 	export let onShowValves: Function;
 	export let onClose: Function;
 	export let closeOnOutsideClick = true;
@@ -72,11 +81,13 @@
 	let voiceStatus: VoiceStatus | null = null;
 	let musicStatus: MusicStatus | null = null;
 	let videoStatus: VideoStatus | null = null;
+	let pdfStatus: PdfGeneratorStatus | null = null;
 	let downloadVoiceVoices: { id: string; name: string }[] = [];
 	let downloadVoiceLoadingVoices = false;
 	let downloadVoiceLoadingStatus = false;
 	let musicLoadingStatus = false;
 	let videoLoadingStatus = false;
+	let pdfLoadingStatus = false;
 
 	$: if (show) {
 		init();
@@ -86,6 +97,7 @@
 		void refreshVoiceStatus();
 		void refreshMusicStatus();
 		void refreshVideoStatus();
+		void refreshPdfStatus();
 	}
 
 	let fileUploadEnabled = true;
@@ -127,14 +139,13 @@
 			musicStatus = await getMusicStatus(localStorage.token);
 
 			if (!musicStatus?.available) {
-				musicEnabled = false;
+				// Don't auto-disable an active generation mode; preserve the user's state.
 				musicUnavailableMessage = $i18n.t('Music generation temporarily unavailable');
 			} else {
 				musicUnavailableMessage = '';
 			}
 		} catch (e) {
 			musicStatus = null;
-			musicEnabled = false;
 			musicUnavailableMessage = $i18n.t('Music generation temporarily unavailable');
 		} finally {
 			musicLoadingStatus = false;
@@ -148,17 +159,33 @@
 			videoStatus = await getVideoStatus(localStorage.token);
 
 			if (!videoStatus?.available) {
-				videoEnabled = false;
+				// Don't auto-disable an active generation mode; preserve the user's state.
 				videoUnavailableMessage = $i18n.t('Video generation temporarily unavailable');
 			} else {
 				videoUnavailableMessage = '';
 			}
 		} catch (e) {
 			videoStatus = null;
-			videoEnabled = false;
 			videoUnavailableMessage = $i18n.t('Video generation temporarily unavailable');
 		} finally {
 			videoLoadingStatus = false;
+		}
+	};
+
+	const refreshPdfStatus = async () => {
+		if (!mounted || pdfLoadingStatus) return;
+		pdfLoadingStatus = true;
+		try {
+			pdfStatus = await getPdfGeneratorStatus(localStorage.token);
+
+			if (!pdfStatus?.available && pdfEnabled) {
+				pdfEnabled = false;
+			}
+		} catch (e) {
+			pdfStatus = null;
+			pdfEnabled = false;
+		} finally {
+			pdfLoadingStatus = false;
 		}
 	};
 
@@ -199,6 +226,7 @@
 		void refreshVoiceStatus();
 		void refreshMusicStatus();
 		void refreshVideoStatus();
+		void refreshPdfStatus();
 	});
 
 	const init = async () => {
@@ -255,40 +283,42 @@
 			align="start"
 			transition={flyAndScale}
 		>
-			{#if tab === ''}
-				<div in:fly={{ x: -20, duration: 150 }}>
-					{#if tools}
-						{#if Object.keys(tools).length > 0}
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								on:click={() => {
-									tab = 'tools';
-								}}
-							>
-								<Wrench />
+				{#if tab === ''}
+					<div in:fly={{ x: -20, duration: 150 }}>
+						{#if !activeGenerationMode}
+							{#if tools}
+								{#if Object.keys(tools).length > 0}
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+										on:click={() => {
+											tab = 'tools';
+										}}
+									>
+										<Wrench />
 
-								<div class="flex items-center w-full justify-between">
-									<div class=" line-clamp-1">
-										{$i18n.t('Tools')}
-										<span class="ml-0.5 text-gray-500">{Object.keys(tools).length}</span>
-									</div>
+										<div class="flex items-center w-full justify-between">
+											<div class=" line-clamp-1">
+												{$i18n.t('Tools')}
+												<span class="ml-0.5 text-gray-500">{Object.keys(tools).length}</span>
+											</div>
 
-									<div class="text-gray-500">
-										<ChevronRight />
-									</div>
+											<div class="text-gray-500">
+												<ChevronRight />
+											</div>
+										</div>
+									</button>
+								{/if}
+							{:else}
+								<div class="py-4">
+									<Spinner />
 								</div>
-							</button>
+							{/if}
 						{/if}
-					{:else}
-						<div class="py-4">
-							<Spinner />
-						</div>
-					{/if}
 
-					{#if toggleFilters && toggleFilters.length > 0}
-						{#each toggleFilters.sort( (a, b) => a.name.localeCompare( b.name, undefined, { sensitivity: 'base' } ) ) as filter, filterIdx (filter.id)}
-							<Tooltip content={filter?.description} placement="top-start">
-								<button
+						{#if !activeGenerationMode && toggleFilters && toggleFilters.length > 0}
+							{#each toggleFilters.sort( (a, b) => a.name.localeCompare( b.name, undefined, { sensitivity: 'base' } ) ) as filter, filterIdx (filter.id)}
+								<Tooltip content={filter?.description} placement="top-start">
+									<button
 									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 									on:click={() => {
 										if (selectedFilterIds.includes(filter.id)) {
@@ -356,11 +386,11 @@
 						{/each}
 					{/if}
 
-					{#if showWebSearchButton}
-						<Tooltip content={$i18n.t('Search the internet')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								on:click={() => {
+						{#if showWebSearchButton && !activeGenerationMode}
+							<Tooltip content={$i18n.t('Search the internet')} placement="top-start">
+								<button
+									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+									on:click={() => {
 									webSearchEnabled = !webSearchEnabled;
 								}}
 							>
@@ -387,11 +417,11 @@
 						</Tooltip>
 					{/if}
 
-					{#if showImageGenerationButton}
-						<Tooltip content={$i18n.t('Generate an image')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								on:click={() => {
+						{#if showImageGenerationButton && !activeGenerationMode}
+							<Tooltip content={$i18n.t('Generate an image')} placement="top-start">
+								<button
+									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+									on:click={() => {
 									imageGenerationEnabled = !imageGenerationEnabled;
 								}}
 							>
@@ -418,11 +448,11 @@
 						</Tooltip>
 					{/if}
 
-					{#if showCodeInterpreterButton}
-						<Tooltip content={$i18n.t('Execute code for analysis')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								aria-pressed={codeInterpreterEnabled}
+						{#if showCodeInterpreterButton && !activeGenerationMode}
+							<Tooltip content={$i18n.t('Execute code for analysis')} placement="top-start">
+								<button
+									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+									aria-pressed={codeInterpreterEnabled}
 								aria-label={codeInterpreterEnabled
 									? $i18n.t('Disable Code Interpreter')
 									: $i18n.t('Enable Code Interpreter')}
@@ -453,11 +483,11 @@
 						</Tooltip>
 					{/if}
 
-					{#if canUseDownloadVoice()}
-						<div>
-							<Tooltip content={$i18n.t('Generate and download a voice version')} placement="top-start">
-								<button
-									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+						{#if canUseDownloadVoice() && !activeGenerationMode}
+							<div>
+								<Tooltip content={$i18n.t('Generate and download a voice version')} placement="top-start">
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 									aria-pressed={downloadVoiceEnabled}
 									aria-label={$i18n.t('Download Voice')}
 									on:click={async () => {
@@ -530,149 +560,204 @@
 						</div>
 					{/if}
 
-					<div>
-						<Tooltip content={$i18n.t('Generate music from your prompt')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								aria-pressed={musicEnabled}
-								aria-label={$i18n.t('Music')}
-								on:click={async () => {
-									if (musicEnabled) {
-										musicEnabled = false;
-										musicUnavailableMessage = '';
-										return;
-									}
-
-									await refreshMusicStatus();
-									if (!musicStatus?.available) {
-										musicEnabled = false;
-										if (!musicUnavailableMessage) {
-											musicUnavailableMessage = $i18n.t('Music generation temporarily unavailable');
+						{#if musicStatus?.enabled && !activeGenerationMode}
+							<div>
+								<Tooltip content={$i18n.t('Generate music from your prompt')} placement="top-start">
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+									aria-pressed={musicEnabled}
+									aria-label={$i18n.t('Music')}
+									on:click={async () => {
+										if (musicEnabled) {
+											musicEnabled = false;
+											musicUnavailableMessage = '';
+											return;
 										}
-										return;
-									}
 
-									musicUnavailableMessage = '';
-									musicEnabled = true;
-									videoEnabled = false;
-									videoUnavailableMessage = '';
-								}}
-							>
-								<div class="flex-1 truncate">
-									<div class="flex flex-1 gap-2 items-center">
-										<div class="shrink-0">
-											<SoundHigh className="size-4" strokeWidth="1.5" />
-										</div>
-										<div class=" truncate">{$i18n.t('Music')}</div>
-									</div>
-								</div>
+										await refreshMusicStatus();
+										if (!musicStatus?.available) {
+											musicEnabled = false;
+											if (!musicUnavailableMessage) {
+												musicUnavailableMessage = $i18n.t(
+													'Music generation temporarily unavailable'
+												);
+											}
+											return;
+										}
 
-								<div class=" shrink-0">
-									<Switch
-										state={musicEnabled}
-										on:change={async (e) => {
-											const state = e.detail;
-											await tick();
-										}}
-									/>
-								</div>
-							</button>
-						</Tooltip>
-
-						{#if musicUnavailableMessage}
-							<div class="px-3 pb-1 text-xs text-amber-600 dark:text-amber-400">
-								{musicUnavailableMessage}
-							</div>
-						{/if}
-					</div>
-
-					<div>
-						<Tooltip content={$i18n.t('Generate a 1:1 PNG from assistant text')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								aria-pressed={pyPhotoEnabled}
-								aria-label={$i18n.t('PY Photo')}
-								on:click={() => {
-									pyPhotoEnabled = !pyPhotoEnabled;
-								}}
-							>
-								<div class="flex-1 truncate">
-									<div class="flex flex-1 gap-2 items-center">
-										<div class="shrink-0">
-											<Camera className="size-4" strokeWidth="1.5" />
-										</div>
-										<div class=" truncate">PY ფოტო</div>
-									</div>
-								</div>
-
-								<div class=" shrink-0">
-									<Switch
-										state={pyPhotoEnabled}
-										on:change={async (e) => {
-											const state = e.detail;
-											await tick();
-										}}
-									/>
-								</div>
-							</button>
-						</Tooltip>
-					</div>
-
-					<div>
-						<Tooltip content={$i18n.t('Generate video from your prompt')} placement="top-start">
-							<button
-								class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
-								aria-pressed={videoEnabled}
-								aria-label={$i18n.t('Video')}
-								on:click={async () => {
-									if (videoEnabled) {
+										musicUnavailableMessage = '';
+										musicEnabled = true;
 										videoEnabled = false;
 										videoUnavailableMessage = '';
-										return;
-									}
-
-									await refreshVideoStatus();
-									if (!videoStatus?.available) {
-										videoEnabled = false;
-										if (!videoUnavailableMessage) {
-											videoUnavailableMessage = $i18n.t('Video generation temporarily unavailable');
-										}
-										return;
-									}
-
-									videoUnavailableMessage = '';
-									videoEnabled = true;
-									musicEnabled = false;
-									musicUnavailableMessage = '';
-								}}
-							>
-								<div class="flex-1 truncate">
-									<div class="flex flex-1 gap-2 items-center">
-										<div class="shrink-0">
-											<Video className="size-4" strokeWidth="1.5"></Video>
-										</div>
-										<div class=" truncate">ვიდეო</div>
+									}}
+								>
+									<div class="flex-1 truncate">
+											<div class="flex flex-1 gap-2 items-center">
+												<div class="shrink-0">
+													<MusicalNote className="size-4" strokeWidth="1.75" />
+												</div>
+												<div class=" truncate">{$i18n.t('Music')}</div>
+											</div>
 									</div>
-								</div>
 
-								<div class=" shrink-0">
-									<Switch
-										state={videoEnabled}
-										on:change={async (e) => {
-											const state = e.detail;
-											await tick();
-										}}
-									/>
-								</div>
-							</button>
-						</Tooltip>
+									<div class=" shrink-0">
+										<Switch
+											state={musicEnabled}
+											on:change={async (e) => {
+												const state = e.detail;
+												await tick();
+											}}
+										/>
+									</div>
+								</button>
+							</Tooltip>
 
-						{#if videoUnavailableMessage}
-							<div class="px-3 pb-1 text-xs text-amber-600 dark:text-amber-400">
-								{videoUnavailableMessage}
+							{#if musicUnavailableMessage}
+								<div class="px-3 pb-1 text-xs text-amber-600 dark:text-amber-400">
+									{musicUnavailableMessage}
+								</div>
+							{/if}
 							</div>
 						{/if}
-					</div>
+
+						{#if !activeGenerationMode}
+							<div>
+								<Tooltip content={$i18n.t('Generate a 1:1 PNG from assistant text')} placement="top-start">
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+										aria-pressed={pyPhotoEnabled}
+										aria-label={$i18n.t('PY Photo')}
+										on:click={() => {
+											pyPhotoEnabled = !pyPhotoEnabled;
+										}}
+									>
+										<div class="flex-1 truncate">
+											<div class="flex flex-1 gap-2 items-center">
+												<div class="shrink-0">
+													<Camera className="size-4" strokeWidth="1.5" />
+												</div>
+												<div class=" truncate">{$i18n.t('PY Photo')}</div>
+											</div>
+										</div>
+
+										<div class=" shrink-0">
+											<Switch
+												state={pyPhotoEnabled}
+												on:change={async (e) => {
+													const state = e.detail;
+													await tick();
+												}}
+											/>
+										</div>
+									</button>
+								</Tooltip>
+							</div>
+						{/if}
+
+						{#if !activeGenerationMode}
+							<div>
+								<Tooltip content={$i18n.t('Generate video from your prompt')} placement="top-start">
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+										aria-pressed={videoEnabled}
+										aria-label={$i18n.t('Video')}
+										on:click={async () => {
+											if (videoEnabled) {
+												videoEnabled = false;
+												videoUnavailableMessage = '';
+												return;
+											}
+
+											await refreshVideoStatus();
+											if (!videoStatus?.available) {
+												videoEnabled = false;
+												if (!videoUnavailableMessage) {
+													videoUnavailableMessage = $i18n.t(
+														'Video generation temporarily unavailable'
+													);
+												}
+												return;
+											}
+
+											videoUnavailableMessage = '';
+											videoEnabled = true;
+											musicEnabled = false;
+											musicUnavailableMessage = '';
+										}}
+									>
+										<div class="flex-1 truncate">
+											<div class="flex flex-1 gap-2 items-center">
+												<div class="shrink-0">
+													<Video className="size-4" strokeWidth="1.5"></Video>
+												</div>
+												<div class=" truncate">{$i18n.t('Video')}</div>
+											</div>
+										</div>
+
+										<div class=" shrink-0">
+											<Switch
+												state={videoEnabled}
+												on:change={async (e) => {
+													const state = e.detail;
+													await tick();
+												}}
+											/>
+										</div>
+									</button>
+								</Tooltip>
+
+								{#if videoUnavailableMessage}
+									<div class="px-3 pb-1 text-xs text-amber-600 dark:text-amber-400">
+										{videoUnavailableMessage}
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						{#if pdfStatus?.enabled && !activeGenerationMode}
+							<div>
+								<Tooltip content={$i18n.t('Generate a PDF from assistant text')} placement="top-start">
+									<button
+										class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
+									aria-pressed={pdfEnabled}
+									aria-label={$i18n.t('PDF Generator')}
+									on:click={async () => {
+										if (pdfEnabled) {
+											pdfEnabled = false;
+											return;
+										}
+
+										await refreshPdfStatus();
+										if (!pdfStatus?.available) {
+											pdfEnabled = false;
+											return;
+										}
+
+										pdfEnabled = true;
+									}}
+								>
+									<div class="flex-1 truncate">
+										<div class="flex flex-1 gap-2 items-center">
+											<div class="shrink-0">
+												<DocumentArrowDown className="size-4" strokeWidth="1.5" />
+											</div>
+											<div class=" truncate">{$i18n.t('PDF Generator')}</div>
+										</div>
+									</div>
+
+									<div class=" shrink-0">
+										<Switch
+											state={pdfEnabled}
+											on:change={async (e) => {
+												const state = e.detail;
+												await tick();
+											}}
+										/>
+									</div>
+								</button>
+							</Tooltip>
+						</div>
+					{/if}
 				</div>
 			{:else if tab === 'tools' && tools}
 				<div in:fly={{ x: 20, duration: 150 }}>

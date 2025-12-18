@@ -18,21 +18,32 @@
 	let loading = false;
 	let saving = false;
 
-	let ENABLE_MUSIC_GENERATION = false;
-	let MUSIC_API_BASE_URL = '';
-	let MUSIC_API_KEY = '';
-	let MUSIC_API_GENERATE_PATH = '/generate';
-	let MUSIC_MODEL = '';
+	let ELEVENLABS_MUSIC_ENABLED = true;
+	let ELEVENLABS_API_KEY = '';
+	let ELEVENLABS_MUSIC_MODE = 'detailed';
+	let ELEVENLABS_MUSIC_DEFAULT_FORMAT = 'mp3_44100_128';
+	let ELEVENLABS_MUSIC_MODEL_ID = 'music_v1';
+	let ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = 30000;
+	let ELEVENLABS_MUSIC_MAX_LENGTH_MS = 120000;
+
+	const OUTPUT_FORMATS = [
+		'mp3_44100_128',
+		'mp3_44100_192',
+		'mp3_44100_320',
+		'wav_44100'
+	];
 
 	const load = async () => {
 		loading = true;
 		try {
 			const cfg = (await getMusicConfig(localStorage.token)) as MusicConfig;
-			ENABLE_MUSIC_GENERATION = Boolean(cfg?.ENABLE_MUSIC_GENERATION);
-			MUSIC_API_BASE_URL = cfg?.MUSIC_API_BASE_URL ?? '';
-			MUSIC_API_KEY = cfg?.MUSIC_API_KEY ?? '';
-			MUSIC_API_GENERATE_PATH = cfg?.MUSIC_API_GENERATE_PATH ?? '/generate';
-			MUSIC_MODEL = cfg?.MUSIC_MODEL ?? '';
+			ELEVENLABS_MUSIC_ENABLED = Boolean(cfg?.ELEVENLABS_MUSIC_ENABLED);
+			ELEVENLABS_API_KEY = cfg?.ELEVENLABS_API_KEY ?? '';
+			ELEVENLABS_MUSIC_MODE = cfg?.ELEVENLABS_MUSIC_MODE ?? 'detailed';
+			ELEVENLABS_MUSIC_DEFAULT_FORMAT = cfg?.ELEVENLABS_MUSIC_DEFAULT_FORMAT ?? 'mp3_44100_128';
+			ELEVENLABS_MUSIC_MODEL_ID = cfg?.ELEVENLABS_MUSIC_MODEL_ID ?? 'music_v1';
+			ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = Number(cfg?.ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS ?? 30000);
+			ELEVENLABS_MUSIC_MAX_LENGTH_MS = Number(cfg?.ELEVENLABS_MUSIC_MAX_LENGTH_MS ?? 120000);
 		} catch (e) {
 			toast.error(`${e}`);
 		} finally {
@@ -44,11 +55,13 @@
 		saving = true;
 		try {
 			await updateMusicConfig(localStorage.token, {
-				ENABLE_MUSIC_GENERATION,
-				MUSIC_API_BASE_URL,
-				MUSIC_API_KEY,
-				MUSIC_API_GENERATE_PATH,
-				MUSIC_MODEL
+				ELEVENLABS_MUSIC_ENABLED,
+				ELEVENLABS_API_KEY,
+				ELEVENLABS_MUSIC_MODE: 'detailed',
+				ELEVENLABS_MUSIC_DEFAULT_FORMAT,
+				ELEVENLABS_MUSIC_MODEL_ID,
+				ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS,
+				ELEVENLABS_MUSIC_MAX_LENGTH_MS
 			});
 
 			saveHandler?.();
@@ -66,9 +79,9 @@
 
 <div class="flex flex-col gap-4 pb-16">
 	<div>
-		<div class="text-lg font-semibold">{$i18n.t('Music')}</div>
+		<div class="text-lg font-semibold">{$i18n.t('ElevenLabs Music')}</div>
 		<div class="text-sm text-gray-500 dark:text-gray-400">
-			{$i18n.t('Configure provider endpoint, API key, and default model.')}
+			{$i18n.t('Generate music using the ElevenLabs Music API (non-streaming).')}
 		</div>
 	</div>
 
@@ -79,49 +92,80 @@
 	{:else}
 		<div class="flex items-center justify-between gap-4 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
 			<div class="flex flex-col">
-				<div class="font-medium">{$i18n.t('Enable Music')}</div>
+				<div class="font-medium">{$i18n.t('Enable ElevenLabs Music')}</div>
 				<div class="text-xs text-gray-500 dark:text-gray-400">
-					{$i18n.t('Allow users to generate music from chat prompts')}
+					{$i18n.t('Allow users to generate music from chat prompts (no credits)')}
 				</div>
 			</div>
 
 			<Switch
-				state={ENABLE_MUSIC_GENERATION}
+				state={ELEVENLABS_MUSIC_ENABLED}
 				on:change={(e) => {
-					ENABLE_MUSIC_GENERATION = e.detail;
+					ELEVENLABS_MUSIC_ENABLED = e.detail;
 				}}
 			/>
 		</div>
 
 		<div class="flex flex-col gap-2">
-			<div class="text-sm font-medium">{$i18n.t('API Base URL')}</div>
-			<input
-				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden"
-				placeholder="https://example.com"
-				bind:value={MUSIC_API_BASE_URL}
-			/>
+			<div class="text-sm font-medium">{$i18n.t('ElevenLabs API Key')}</div>
+			<SensitiveInput bind:value={ELEVENLABS_API_KEY} placeholder={$i18n.t('Enter API key')} />
 		</div>
 
 		<div class="flex flex-col gap-2">
-			<div class="text-sm font-medium">{$i18n.t('Generate Path')}</div>
-			<input
+			<div class="text-sm font-medium">{$i18n.t('Default Output Format')}</div>
+			<select
 				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden"
-				placeholder="/generate"
-				bind:value={MUSIC_API_GENERATE_PATH}
-			/>
+				bind:value={ELEVENLABS_MUSIC_DEFAULT_FORMAT}
+			>
+				{#each OUTPUT_FORMATS as fmt}
+					<option value={fmt}>{fmt}</option>
+				{/each}
+			</select>
 		</div>
 
 		<div class="flex flex-col gap-2">
-			<div class="text-sm font-medium">{$i18n.t('API Key')}</div>
-			<SensitiveInput bind:value={MUSIC_API_KEY} placeholder={$i18n.t('Enter API key')} />
+			<div class="text-sm font-medium">{$i18n.t('Music Mode')}</div>
+			<input
+				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden opacity-70"
+				value={ELEVENLABS_MUSIC_MODE || 'detailed'}
+				readonly
+			/>
+			<div class="text-xs text-gray-500 dark:text-gray-400">
+				{$i18n.t('Streaming is disabled; mode is fixed to detailed')}
+			</div>
 		</div>
 
 		<div class="flex flex-col gap-2">
 			<div class="text-sm font-medium">{$i18n.t('Default Model')}</div>
 			<input
 				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden"
-				placeholder="model-id"
-				bind:value={MUSIC_MODEL}
+				placeholder="music_v1"
+				bind:value={ELEVENLABS_MUSIC_MODEL_ID}
+			/>
+		</div>
+
+		<div class="flex flex-col gap-2">
+			<div class="text-sm font-medium">{$i18n.t('Default Music Length (ms)')}</div>
+			<input
+				type="number"
+				min="1000"
+				step="1000"
+				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden"
+				bind:value={ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS}
+			/>
+			<div class="text-xs text-gray-500 dark:text-gray-400">
+				{$i18n.t('If not provided by the client, backend uses 30000ms')}
+			</div>
+		</div>
+
+		<div class="flex flex-col gap-2">
+			<div class="text-sm font-medium">{$i18n.t('Max Music Length (ms)')}</div>
+			<input
+				type="number"
+				min="1000"
+				step="1000"
+				class="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-hidden"
+				bind:value={ELEVENLABS_MUSIC_MAX_LENGTH_MS}
 			/>
 		</div>
 
@@ -143,4 +187,3 @@
 		</div>
 	{/if}
 </div>
-

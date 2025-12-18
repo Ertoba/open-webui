@@ -1176,7 +1176,7 @@ ENABLE_PASSWORD_AUTH = os.environ.get("ENABLE_PASSWORD_AUTH", "True").lower() ==
 DEFAULT_LOCALE = PersistentConfig(
     "DEFAULT_LOCALE",
     "ui.default_locale",
-    os.environ.get("DEFAULT_LOCALE", ""),
+    os.environ.get("DEFAULT_LOCALE", "ka-GE"),
 )
 
 DEFAULT_MODELS = PersistentConfig(
@@ -3926,6 +3926,49 @@ MUSIC_CREDITS_PACKAGES = PersistentConfig(
 # MUSIC / VIDEO API
 ####################################
 
+# ElevenLabs Music
+ELEVENLABS_API_KEY = PersistentConfig(
+    "ELEVENLABS_API_KEY",
+    "elevenlabs.api.key",
+    os.environ.get("ELEVENLABS_API_KEY", ""),
+)
+
+ELEVENLABS_MUSIC_ENABLED = PersistentConfig(
+    "ELEVENLABS_MUSIC_ENABLED",
+    "elevenlabs.music.enable",
+    os.environ.get("ELEVENLABS_MUSIC_ENABLED", "true").lower() == "true",
+)
+
+ELEVENLABS_MUSIC_DEFAULT_FORMAT = PersistentConfig(
+    "ELEVENLABS_MUSIC_DEFAULT_FORMAT",
+    "elevenlabs.music.default_format",
+    os.environ.get("ELEVENLABS_MUSIC_DEFAULT_FORMAT", "mp3_44100_128"),
+)
+
+ELEVENLABS_MUSIC_MODE = PersistentConfig(
+    "ELEVENLABS_MUSIC_MODE",
+    "elevenlabs.music.mode",
+    os.environ.get("ELEVENLABS_MUSIC_MODE", "detailed"),
+)
+
+ELEVENLABS_MUSIC_MODEL_ID = PersistentConfig(
+    "ELEVENLABS_MUSIC_MODEL_ID",
+    "elevenlabs.music.model_id",
+    os.environ.get("ELEVENLABS_MUSIC_MODEL_ID", "music_v1"),
+)
+
+ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = PersistentConfig(
+    "ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS",
+    "elevenlabs.music.default_length_ms",
+    int(os.environ.get("ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS", "30000") or 30000),
+)
+
+ELEVENLABS_MUSIC_MAX_LENGTH_MS = PersistentConfig(
+    "ELEVENLABS_MUSIC_MAX_LENGTH_MS",
+    "elevenlabs.music.max_length_ms",
+    int(os.environ.get("ELEVENLABS_MUSIC_MAX_LENGTH_MS", "120000") or 120000),
+)
+
 ENABLE_MUSIC_GENERATION = PersistentConfig(
     "ENABLE_MUSIC_GENERATION",
     "music.enable",
@@ -3984,6 +4027,16 @@ VIDEO_MODEL = PersistentConfig(
     "VIDEO_MODEL",
     "video.model",
     os.environ.get("VIDEO_MODEL", ""),
+)
+
+####################################
+# PDF GENERATOR
+####################################
+
+ENABLE_PDF_GENERATOR = PersistentConfig(
+    "ENABLE_PDF_GENERATOR",
+    "pdf_generator.enable",
+    os.environ.get("ENABLE_PDF_GENERATOR", "true").lower() == "true",
 )
 
 

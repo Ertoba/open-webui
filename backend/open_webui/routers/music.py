@@ -1,20 +1,26 @@
-import base64
 import json
 import logging
 import mimetypes
-import os
 import time
 import uuid
+import base64
+import asyncio
 from pathlib import Path
 
 import aiofiles
-import aiohttp
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from open_webui.config import CACHE_DIR
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT, SRC_LOG_LEVELS
+from open_webui.env import (
+    AIOHTTP_CLIENT_TIMEOUT,
+    REDIS_KEY_PREFIX,
+    SRC_LOG_LEVELS,
+)
+from open_webui.models.files import FileForm, Files
+from open_webui.storage.provider import Storage
 from open_webui.utils.auth import get_admin_user, get_verified_user_or_none
 from open_webui.utils.domain_credits import commit_generation, preflight_generation
 
@@ -24,60 +30,19 @@ log.setLevel(SRC_LOG_LEVELS.get("ROUTERS", logging.INFO))
 MUSIC_CACHE_DIR = CACHE_DIR / "music" / "generations"
 MUSIC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+ELEVENLABS_BASE_URL = "https://api.elevenlabs.io"
+
 router = APIRouter()
 
+_REQUEST_CACHE: dict[str, tuple[float, dict]] = {}
+_REQUEST_CACHE_LOCK = asyncio.Lock()
 
-_MUSIC_MEDIA_TYPE_BY_EXT: dict[str, str] = {
-    "mp3": "audio/mpeg",
-    "wav": "audio/wav",
-    "ogg": "audio/ogg",
-    "m4a": "audio/mp4",
-}
-
-
-def _sanitize_ext(ext: str | None) -> str:
-    ext = (ext or "").strip().lower()
-    if ext.startswith("."):
-        ext = ext[1:]
-    return ext or "mp3"
-
-
-def _guess_ext_for_media_type(media_type: str | None) -> str:
-    media_type = (media_type or "").split(";", 1)[0].strip().lower()
-    if media_type == "audio/mpeg":
-        return "mp3"
-    if media_type == "audio/wav" or media_type == "audio/wave":
-        return "wav"
-    if media_type == "audio/ogg":
-        return "ogg"
-    if media_type == "audio/mp4":
-        return "m4a"
-
-    ext = mimetypes.guess_extension(media_type or "") or ""
-    return _sanitize_ext(ext)
-
-
-def _guess_media_type_for_ext(ext: str) -> str:
-    ext = _sanitize_ext(ext)
-    return (
-        _MUSIC_MEDIA_TYPE_BY_EXT.get(ext)
-        or mimetypes.types_map.get(f".{ext}")
-        or "application/octet-stream"
-    )
-
-
-def _music_cache_paths(*, audio_id: str, ext: str) -> tuple[Path, Path]:
-    safe_ext = _sanitize_ext(ext)
-    file_path = MUSIC_CACHE_DIR / f"{audio_id}.{safe_ext}"
-    meta_path = MUSIC_CACHE_DIR / f"{audio_id}.json"
-    return file_path, meta_path
+MUSIC_REQUEST_TTL_SECONDS = 15 * 60
 
 
 def _get_or_set_anon_id(request: Request, response: Response) -> str:
     anon_id = (
-        request.headers.get("X-OWUI-ANON-ID")
-        or request.cookies.get("owui_anon_id")
-        or ""
+        request.headers.get("X-OWUI-ANON-ID") or request.cookies.get("owui_anon_id") or ""
     ).strip()
     if anon_id:
         return anon_id
@@ -92,40 +57,191 @@ def _get_or_set_anon_id(request: Request, response: Response) -> str:
     return anon_id
 
 
-class MusicConfig(BaseModel):
-    ENABLE_MUSIC_GENERATION: bool
-    MUSIC_API_BASE_URL: str
-    MUSIC_API_KEY: str
-    MUSIC_API_GENERATE_PATH: str
-    MUSIC_MODEL: str
+def _enabled(request: Request) -> bool:
+    return bool(getattr(request.app.state.config, "ELEVENLABS_MUSIC_ENABLED", True) or False)
 
 
-@router.get("/config", response_model=MusicConfig)
+def _api_key(request: Request) -> str:
+    return str(getattr(request.app.state.config, "ELEVENLABS_API_KEY", "") or "").strip()
+
+
+def _default_format(request: Request) -> str:
+    return str(
+        getattr(request.app.state.config, "ELEVENLABS_MUSIC_DEFAULT_FORMAT", "mp3_44100_128")
+        or "mp3_44100_128"
+    ).strip()
+
+
+def _default_model_id(request: Request) -> str:
+    return str(getattr(request.app.state.config, "ELEVENLABS_MUSIC_MODEL_ID", "music_v1") or "music_v1").strip()
+
+
+def _mode(request: Request) -> str:
+    return str(getattr(request.app.state.config, "ELEVENLABS_MUSIC_MODE", "detailed") or "detailed").strip().lower()
+
+
+def _default_length_ms(request: Request) -> int:
+    try:
+        return int(getattr(request.app.state.config, "ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS", 30000) or 30000)
+    except Exception:
+        return 30000
+
+
+def _max_length_ms(request: Request) -> int:
+    try:
+        return int(getattr(request.app.state.config, "ELEVENLABS_MUSIC_MAX_LENGTH_MS", 120000) or 120000)
+    except Exception:
+        return 120000
+
+
+def _sanitize_ext(ext: str | None) -> str:
+    ext = (ext or "").strip().lower()
+    if ext.startswith("."):
+        ext = ext[1:]
+    return ext or "mp3"
+
+
+def _ext_from_output_format(output_format: str | None) -> str:
+    fmt = (output_format or "").strip().lower()
+    if not fmt:
+        return "mp3"
+    head = fmt.split("_", 1)[0].strip()
+    if head in {"mp3", "wav", "ogg", "m4a", "flac"}:
+        return head
+    return "mp3"
+
+
+def _guess_media_type_for_ext(ext: str) -> str:
+    ext = _sanitize_ext(ext)
+    if ext == "mp3":
+        return "audio/mpeg"
+    if ext == "wav":
+        return "audio/wav"
+    if ext == "ogg":
+        return "audio/ogg"
+    if ext == "m4a":
+        return "audio/mp4"
+    if ext == "flac":
+        return "audio/flac"
+    return mimetypes.types_map.get(f".{ext}") or "application/octet-stream"
+
+
+def _music_paths(*, audio_id: str, ext: str) -> tuple[Path, Path]:
+    ext = _sanitize_ext(ext)
+    file_path = MUSIC_CACHE_DIR / f"{audio_id}.{ext}"
+    meta_path = MUSIC_CACHE_DIR / f"{audio_id}.json"
+    return file_path, meta_path
+
+
+def _find_cached_music_file(audio_id: str) -> tuple[Path, str, str] | None:
+    audio_id = str(audio_id or "").strip()
+    if not audio_id:
+        return None
+
+    for p in MUSIC_CACHE_DIR.glob(f"{audio_id}.*"):
+        if p.name.endswith(".json"):
+            continue
+        ext = _sanitize_ext(p.suffix)
+        media_type = _guess_media_type_for_ext(ext)
+        return p, ext, media_type
+    return None
+
+
+async def _read_meta(audio_id: str) -> dict | None:
+    _file_path, meta_path = _music_paths(audio_id=audio_id, ext="mp3")
+    if not meta_path.is_file():
+        return None
+    try:
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            return json.loads(await f.read())
+    except Exception:
+        return None
+
+
+def _persist_music_file_to_user_files(
+    request: Request,
+    *,
+    user,
+    local_file_path: Path,
+    filename: str,
+    content_type: str,
+    metadata: dict,
+) -> str | None:
+    try:
+        with open(local_file_path, "rb") as f:
+            contents, storage_path = Storage.upload_file(
+                f,
+                f"{uuid.uuid4()}_{filename}",
+                {
+                    "OpenWebUI-User-Email": user.email,
+                    "OpenWebUI-User-Id": user.id,
+                    "OpenWebUI-User-Name": user.name,
+                },
+            )
+        file_id = str(uuid.uuid4())
+        Files.insert_new_file(
+            user.id,
+            FileForm(
+                **{
+                    "id": file_id,
+                    "filename": filename,
+                    "path": storage_path,
+                    "data": {},
+                    "meta": {
+                        "name": filename,
+                        "content_type": content_type,
+                        "size": len(contents),
+                        "data": metadata,
+                    },
+                }
+            ),
+        )
+        return file_id
+    except Exception:
+        return None
+
+
+class ElevenLabsMusicConfig(BaseModel):
+    ELEVENLABS_MUSIC_ENABLED: bool
+    ELEVENLABS_API_KEY: str
+    ELEVENLABS_MUSIC_MODE: str
+    ELEVENLABS_MUSIC_DEFAULT_FORMAT: str
+    ELEVENLABS_MUSIC_MODEL_ID: str
+    ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS: int
+    ELEVENLABS_MUSIC_MAX_LENGTH_MS: int
+
+
+@router.get("/config", response_model=ElevenLabsMusicConfig)
 async def get_music_config(request: Request, user=Depends(get_admin_user)):
     return {
-        "ENABLE_MUSIC_GENERATION": bool(
-            getattr(request.app.state.config, "ENABLE_MUSIC_GENERATION", False) or False
-        ),
-        "MUSIC_API_BASE_URL": str(getattr(request.app.state.config, "MUSIC_API_BASE_URL", "") or ""),
-        "MUSIC_API_KEY": str(getattr(request.app.state.config, "MUSIC_API_KEY", "") or ""),
-        "MUSIC_API_GENERATE_PATH": str(
-            getattr(request.app.state.config, "MUSIC_API_GENERATE_PATH", "/generate") or "/generate"
-        ),
-        "MUSIC_MODEL": str(getattr(request.app.state.config, "MUSIC_MODEL", "") or ""),
+        "ELEVENLABS_MUSIC_ENABLED": _enabled(request),
+        "ELEVENLABS_API_KEY": _api_key(request),
+        "ELEVENLABS_MUSIC_MODE": _mode(request) or "detailed",
+        "ELEVENLABS_MUSIC_DEFAULT_FORMAT": _default_format(request),
+        "ELEVENLABS_MUSIC_MODEL_ID": _default_model_id(request),
+        "ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS": _default_length_ms(request),
+        "ELEVENLABS_MUSIC_MAX_LENGTH_MS": _max_length_ms(request),
     }
 
 
-@router.post("/config/update", response_model=MusicConfig)
+@router.post("/config/update", response_model=ElevenLabsMusicConfig)
 async def update_music_config(
-    request: Request, form_data: MusicConfig, user=Depends(get_admin_user)
+    request: Request, form_data: ElevenLabsMusicConfig, user=Depends(get_admin_user)
 ):
-    request.app.state.config.ENABLE_MUSIC_GENERATION = bool(form_data.ENABLE_MUSIC_GENERATION)
-    request.app.state.config.MUSIC_API_BASE_URL = str(form_data.MUSIC_API_BASE_URL or "").strip()
-    request.app.state.config.MUSIC_API_KEY = str(form_data.MUSIC_API_KEY or "").strip()
-    request.app.state.config.MUSIC_API_GENERATE_PATH = (
-        str(form_data.MUSIC_API_GENERATE_PATH or "/generate").strip() or "/generate"
-    )
-    request.app.state.config.MUSIC_MODEL = str(form_data.MUSIC_MODEL or "").strip()
+    request.app.state.config.ELEVENLABS_MUSIC_ENABLED = bool(form_data.ELEVENLABS_MUSIC_ENABLED)
+    request.app.state.config.ELEVENLABS_API_KEY = str(form_data.ELEVENLABS_API_KEY or "").strip()
+    # Streaming is explicitly forbidden: force detailed mode always.
+    request.app.state.config.ELEVENLABS_MUSIC_MODE = "detailed"
+    request.app.state.config.ELEVENLABS_MUSIC_DEFAULT_FORMAT = str(form_data.ELEVENLABS_MUSIC_DEFAULT_FORMAT or "mp3_44100_128").strip()
+    request.app.state.config.ELEVENLABS_MUSIC_MODEL_ID = str(form_data.ELEVENLABS_MUSIC_MODEL_ID or "music_v1").strip()
+    try:
+        request.app.state.config.ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = int(form_data.ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS)
+    except Exception:
+        request.app.state.config.ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = _default_length_ms(request)
+    try:
+        request.app.state.config.ELEVENLABS_MUSIC_MAX_LENGTH_MS = int(form_data.ELEVENLABS_MUSIC_MAX_LENGTH_MS)
+    except Exception:
+        request.app.state.config.ELEVENLABS_MUSIC_MAX_LENGTH_MS = _max_length_ms(request)
 
     return await get_music_config(request, user=user)
 
@@ -148,12 +264,11 @@ async def music_status(
     if user is None:
         _get_or_set_anon_id(request, response)
 
-    enabled = bool(getattr(request.app.state.config, "ENABLE_MUSIC_GENERATION", False) or False)
-    base_url = str(getattr(request.app.state.config, "MUSIC_API_BASE_URL", "") or "").strip()
-    configured = bool(base_url)
+    enabled = _enabled(request)
+    configured = bool(_api_key(request))
 
     is_admin = getattr(user, "role", None) == "admin"
-    redis_available = request.app.state.redis is not None
+    redis_available = getattr(request.app.state, "redis", None) is not None
     credits_required = not is_admin
 
     available = bool(enabled and configured and (not credits_required or redis_available))
@@ -163,159 +278,369 @@ async def music_status(
         "configured": configured,
         "redis_available": redis_available,
         "credits_required": credits_required,
-        "default_model": str(getattr(request.app.state.config, "MUSIC_MODEL", "") or ""),
+        "default_model": _default_model_id(request),
     }
 
 
-class MusicGenerateForm(BaseModel):
-    prompt: str
-    model: str | None = None
+class MusicStreamForm(BaseModel):
+    request_id: str
+    prompt: str | None = None
+    composition_plan: str | None = None
+    music_length_ms: int | None = None
+    output_format: str | None = None
+    force_instrumental: bool | None = False
+    model_id: str | None = None
+    chat_id: str
+    message_id: str
 
 
-class MusicGenerateResponse(BaseModel):
-    id: str
-    ext: str
-    media_type: str
-    data_url: str | None = None
-    play_url: str
-    download_url: str
-    charged: bool = False
+@router.get("/{audio_id}/meta")
+async def get_music_meta(audio_id: str):
+    audio_id = str(audio_id or "").strip()
+    if not audio_id:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    meta = await _read_meta(audio_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return {
+        **meta,
+        "id": audio_id,
+        "play_url": f"/api/v1/music/{audio_id}",
+        "download_url": f"/api/v1/music/{audio_id}/download",
+    }
+def _music_request_cache_key(request_id: str) -> str:
+    return f"{REDIS_KEY_PREFIX}:music:request:{request_id}"
 
 
-async def _fetch_bytes_from_url(url: str, *, headers: dict | None = None) -> tuple[bytes, str]:
-    timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
-        async with session.get(url, headers=headers or {}, ssl=AIOHTTP_CLIENT_SESSION_SSL) as r:
-            r.raise_for_status()
-            media_type = str(r.headers.get("Content-Type") or "").split(";", 1)[0].strip()
-            return await r.read(), media_type or "application/octet-stream"
-
-
-def _decode_data_url(data_url: str) -> tuple[bytes, str]:
-    if not data_url.startswith("data:"):
-        raise ValueError("Invalid data_url")
+def _require_uuid(value: str, *, field: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail=f"{field} is required")
     try:
-        header, b64 = data_url.split(",", 1)
-    except ValueError as e:
-        raise ValueError("Invalid data_url") from e
-
-    media_type = header.split(";", 1)[0].replace("data:", "").strip() or "application/octet-stream"
-    data = base64.b64decode(b64)
-    return data, media_type
+        uuid.UUID(value)
+    except Exception:
+        raise HTTPException(status_code=422, detail=f"{field} must be a UUID")
+    return value
 
 
-async def _provider_generate_music(
+async def _cache_get(request: Request, request_id: str) -> dict | None:
+    request_id = (request_id or "").strip()
+    if not request_id:
+        return None
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        try:
+            raw = await redis.get(_music_request_cache_key(request_id))
+            if raw:
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8", errors="replace")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+        except Exception:
+            pass
+
+    now = time.time()
+    async with _REQUEST_CACHE_LOCK:
+        cached = _REQUEST_CACHE.get(request_id)
+        if not cached:
+            return None
+        expires_at, value = cached
+        if expires_at <= now:
+            _REQUEST_CACHE.pop(request_id, None)
+            return None
+        return value
+
+
+async def _cache_set(request: Request, request_id: str, value: dict, *, ttl_seconds: int) -> None:
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        try:
+            await redis.set(_music_request_cache_key(request_id), json.dumps(value, ensure_ascii=False), ex=ttl_seconds)
+            return
+        except Exception:
+            pass
+
+    expires_at = time.time() + ttl_seconds
+    async with _REQUEST_CACHE_LOCK:
+        _REQUEST_CACHE[request_id] = (expires_at, value)
+
+
+async def _cache_set_pending_nx(request: Request, request_id: str, *, ttl_seconds: int) -> bool:
+    pending = {"status": "pending", "created_at": int(time.time())}
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        try:
+            created = await redis.set(
+                _music_request_cache_key(request_id),
+                json.dumps(pending, ensure_ascii=False),
+                nx=True,
+                ex=ttl_seconds,
+            )
+            return bool(created)
+        except Exception:
+            pass
+
+    async with _REQUEST_CACHE_LOCK:
+        now = time.time()
+        existing = _REQUEST_CACHE.get(request_id)
+        if existing and existing[0] > now:
+            return False
+        _REQUEST_CACHE[request_id] = (now + ttl_seconds, pending)
+        return True
+
+
+def _response_from_cached_entry(entry: dict) -> dict:
+    status_value = str(entry.get("status") or "").strip().lower()
+    if status_value == "pending":
+        return {"status": "pending"}
+    if status_value == "complete":
+        result = entry.get("result")
+        if isinstance(result, dict):
+            return result
+        raise HTTPException(status_code=502, detail="Invalid cached result")
+    if status_value == "error":
+        http_status = int(entry.get("http_status") or 502)
+        detail = str(entry.get("detail") or "Music generation failed")
+        raise HTTPException(status_code=http_status, detail=detail)
+    return {"status": "pending"}
+
+
+@router.get("/requests/{request_id}")
+async def get_music_request(request: Request, request_id: str):
+    request_id = _require_uuid(request_id, field="request_id")
+    entry = await _cache_get(request, request_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _response_from_cached_entry(entry)
+
+
+async def _elevenlabs_compose(
     request: Request,
     *,
+    payload: dict,
+    ext: str,
+) -> tuple[bytes, str, dict]:
+    api_key = _api_key(request)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="ElevenLabs API key is not configured")
+
+    base_url = str(getattr(request.app.state.config, "ELEVENLABS_API_BASE_URL", ELEVENLABS_BASE_URL) or ELEVENLABS_BASE_URL).strip()
+    url = base_url.rstrip("/") + "/v1/music/compose"
+
+    headers = {"Content-Type": "application/json", "xi-api-key": api_key}
+
+    timeout = httpx.Timeout(AIOHTTP_CLIENT_TIMEOUT)
+    transport = httpx.AsyncHTTPTransport(retries=0)
+
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        trust_env=True,
+        follow_redirects=False,
+        transport=transport,
+    ) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        raw_text = resp.text
+
+        if resp.status_code >= 400:
+            log.error("ElevenLabs status=%s body=%s", resp.status_code, raw_text)
+            if resp.status_code == 402:
+                raise HTTPException(status_code=402, detail="ElevenLabs credits insufficient")
+            raise HTTPException(status_code=502, detail=f"ElevenLabs error {resp.status_code}: {raw_text}")
+
+        content_type = str(resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        media_type = _guess_media_type_for_ext(ext)
+        meta_extra: dict = {}
+
+        if content_type.startswith("audio/"):
+            return resp.content, content_type, meta_extra
+
+        try:
+            parsed = resp.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Unexpected ElevenLabs response")
+
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=502, detail="Unexpected ElevenLabs response")
+
+        meta_extra = {k: v for k, v in parsed.items() if k not in ("audio", "audio_base64", "audio_b64")}
+
+        audio_b64 = (
+            parsed.get("audio_base64")
+            or parsed.get("audio_b64")
+            or parsed.get("audio")
+            or parsed.get("audio_data")
+        )
+        audio_bytes: bytes | None = None
+        if isinstance(audio_b64, str) and audio_b64.strip():
+            b64_str = audio_b64.strip()
+            if b64_str.startswith("data:") and "," in b64_str:
+                header, b64_payload = b64_str.split(",", 1)
+                media_type = header.split(";", 1)[0].replace("data:", "").strip() or media_type
+                b64_str = b64_payload
+            audio_bytes = base64.b64decode(b64_str)
+
+        mt = parsed.get("media_type") or parsed.get("mime_type") or parsed.get("content_type")
+        if isinstance(mt, str) and mt.strip():
+            media_type = mt.split(";", 1)[0].strip().lower()
+
+        if not audio_bytes:
+            raise HTTPException(status_code=502, detail="No audio returned by ElevenLabs")
+        return audio_bytes, media_type, meta_extra
+
+
+async def _run_generation_and_cache(
+    request: Request,
+    *,
+    request_id: str,
+    payload: dict,
+    length_ms: int,
+    output_format: str,
+    model_id: str,
+    ext: str,
     prompt: str,
-    model: str,
+    plan: str,
     user,
-) -> tuple[bytes, str, str]:
-    base_url = str(getattr(request.app.state.config, "MUSIC_API_BASE_URL", "") or "").strip()
-    if not base_url:
-        raise HTTPException(status_code=400, detail="Music API is not configured")
+    form_data: MusicStreamForm,
+    credits_subject_id: str | None = None,
+    credits_free_limit: int | None = None,
+    credits_mode: str | None = None,
+    credits_cost: int = 0,
+) -> None:
+    try:
+        audio_id = uuid.uuid4().hex
+        file_path, meta_path = _music_paths(audio_id=audio_id, ext=ext)
 
-    generate_path = str(
-        getattr(request.app.state.config, "MUSIC_API_GENERATE_PATH", "/generate") or "/generate"
-    ).strip() or "/generate"
+        audio_bytes, media_type, meta_extra = await _elevenlabs_compose(request, payload=payload, ext=ext)
 
-    url = base_url.rstrip("/") + (generate_path if generate_path.startswith("/") else f"/{generate_path}")
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(audio_bytes)
 
-    api_key = str(getattr(request.app.state.config, "MUSIC_API_KEY", "") or "").strip()
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-        headers["x-api-key"] = api_key
-
-    payload = {"prompt": prompt, "model": model}
-
-    timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
-        async with session.post(url, json=payload, headers=headers, ssl=AIOHTTP_CLIENT_SESSION_SSL) as r:
-            if r.status >= 400:
-                detail = "Music provider error"
-                try:
-                    err_json = await r.json(content_type=None)
-                    if isinstance(err_json, dict):
-                        detail = str(err_json.get("detail") or err_json.get("error") or detail)
-                except Exception:
-                    try:
-                        detail = (await r.text())[:500] or detail
-                    except Exception:
-                        pass
-                raise HTTPException(status_code=502, detail=detail)
-
-            content_type = str(r.headers.get("Content-Type") or "")
-            content_type_base = content_type.split(";", 1)[0].strip().lower()
-
-            if content_type_base.startswith("audio/"):
-                data = await r.read()
-                ext = _guess_ext_for_media_type(content_type_base)
-                return data, ext, content_type_base
-
-            raw = await r.read()
+        charged_paid = False
+        redis = getattr(request.app.state, "redis", None)
+        if (
+            redis is not None
+            and credits_subject_id
+            and credits_mode
+            and credits_free_limit is not None
+        ):
             try:
-                parsed = json.loads(raw.decode("utf-8"))
+                _status_after, charged_paid = await commit_generation(
+                    redis,
+                    domain="music",
+                    subject_id=credits_subject_id,
+                    free_limit=int(credits_free_limit or 0),
+                    mode=str(credits_mode),
+                    cost_credits=int(credits_cost or 0),
+                    now_ts=int(time.time()),
+                )
             except Exception:
-                raise HTTPException(status_code=502, detail="Unexpected music provider response")
+                log.exception("Failed to commit music credits charge")
 
-            if isinstance(parsed, dict):
-                if isinstance(parsed.get("data_url"), str) and parsed["data_url"].startswith("data:"):
-                    data, media_type = _decode_data_url(parsed["data_url"])
-                    ext = _guess_ext_for_media_type(media_type)
-                    return data, ext, media_type
+        file_id: str | None = None
+        if user is not None and file_path.is_file():
+            file_id = _persist_music_file_to_user_files(
+                request,
+                user=user,
+                local_file_path=file_path,
+                filename=f"music-{audio_id}.{ext}",
+                content_type=media_type,
+                metadata={
+                    "source": "music",
+                    "provider": "elevenlabs",
+                    "generated": True,
+                    "format": ext,
+                    "model": model_id,
+                    "output_format": output_format,
+                    "music_length_ms": length_ms,
+                },
+            )
 
-                for key in ("audio_base64", "audio_b64", "b64", "base64", "audio"):
-                    val = parsed.get(key)
-                    if isinstance(val, str) and val.strip():
-                        data = base64.b64decode(val)
-                        media_type = (
-                            str(parsed.get("media_type") or parsed.get("content_type") or "")
-                            .split(";", 1)[0]
-                            .strip()
-                        )
-                        if not media_type:
-                            media_type = "audio/mpeg"
-                        ext = _guess_ext_for_media_type(media_type)
-                        return data, ext, media_type
+        meta: dict = {
+            "provider": "elevenlabs",
+            "source": "music",
+            "generated": True,
+            "model": model_id,
+            "output_format": output_format,
+            "ext": ext,
+            "media_type": media_type,
+            "music_length_ms": length_ms,
+            "created_at": int(time.time()),
+            **({"prompt": prompt} if prompt else {"composition_plan": plan}),
+            **({"chat_id": form_data.chat_id} if form_data.chat_id else {}),
+            **({"message_id": form_data.message_id} if form_data.message_id else {}),
+            **({"file_id": file_id} if file_id else {}),
+            **({"metadata": meta_extra} if meta_extra else {}),
+        }
 
-                for key in ("url", "audio_url", "download_url"):
-                    val = parsed.get(key)
-                    if isinstance(val, str) and val.strip():
-                        data, media_type = await _fetch_bytes_from_url(val.strip(), headers=None)
-                        ext = _guess_ext_for_media_type(media_type)
-                        return data, ext, media_type
+        try:
+            async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(meta, ensure_ascii=False))
+        except Exception:
+            # Metadata write failure should not make the generation fail (credits-safe).
+            log.exception("Failed to write music meta audio_id=%s", audio_id)
 
-            raise HTTPException(status_code=502, detail="Unsupported music provider response")
+        result = {
+            "id": audio_id,
+            "ext": ext,
+            "media_type": media_type,
+            "play_url": f"/api/v1/music/{audio_id}",
+            "download_url": f"/api/v1/music/{audio_id}/download",
+            "file_id": file_id,
+            "charged": bool(charged_paid),
+        }
+        await _cache_set(
+            request,
+            request_id,
+            {"status": "complete", "result": result, "updated_at": int(time.time())},
+            ttl_seconds=MUSIC_REQUEST_TTL_SECONDS,
+        )
+    except HTTPException as e:
+        await _cache_set(
+            request,
+            request_id,
+            {"status": "error", "http_status": int(e.status_code), "detail": str(e.detail), "updated_at": int(time.time())},
+            ttl_seconds=MUSIC_REQUEST_TTL_SECONDS,
+        )
+    except Exception as e:
+        log.exception("Music generation failed request_id=%s", request_id)
+        await _cache_set(
+            request,
+            request_id,
+            {"status": "error", "http_status": 502, "detail": str(e), "updated_at": int(time.time())},
+            ttl_seconds=MUSIC_REQUEST_TTL_SECONDS,
+        )
 
 
-@router.post("/generate", response_model=MusicGenerateResponse)
+@router.post("/generate")
 async def generate_music(
     request: Request,
     response: Response,
-    form_data: MusicGenerateForm,
+    form_data: MusicStreamForm,
     user=Depends(get_verified_user_or_none),
 ):
-    prompt = str(form_data.prompt or "").strip()
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt is required")
+    if user is None:
+        _get_or_set_anon_id(request, response)
 
-    if not bool(getattr(request.app.state.config, "ENABLE_MUSIC_GENERATION", False) or False):
-        raise HTTPException(status_code=503, detail="Music generation is disabled.")
+    if not _enabled(request):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Music is disabled")
 
-    model = (
-        str(form_data.model).strip()
-        if form_data.model is not None and str(form_data.model).strip()
-        else str(getattr(request.app.state.config, "MUSIC_MODEL", "") or "").strip()
-    )
+    request_id = _require_uuid(form_data.request_id, field="request_id")
+    cached = await _cache_get(request, request_id)
+    if cached:
+        return _response_from_cached_entry(cached)
 
     is_admin = getattr(user, "role", None) == "admin"
-    redis = request.app.state.redis
+    redis = getattr(request.app.state, "redis", None)
 
-    subject_id = None
-    free_limit = None
-    cost = None
-    preflight = None
+    credits_subject_id: str | None = None
+    credits_free_limit: int | None = None
+    credits_cost: int | None = None
+    credits_mode: str | None = None
 
     if not is_admin:
         if redis is None:
@@ -324,23 +649,29 @@ async def generate_music(
                 detail="Music generation temporarily unavailable",
             )
 
-        subject_id = user.id if user is not None else f"anon:{_get_or_set_anon_id(request, response)}"
-        free_limit = (
+        credits_subject_id = (
+            user.id
+            if user is not None
+            else f"anon:{_get_or_set_anon_id(request, response)}"
+        )
+        credits_free_limit = (
             int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_AUTH", 0) or 0)
             if user is not None
             else int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_ANON", 0) or 0)
         )
-        cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
+        credits_cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
+
         try:
             preflight = await preflight_generation(
                 redis,
                 domain="music",
-                subject_id=subject_id,
-                free_limit=free_limit,
-                cost_credits=cost,
-                require_auth_after_free=False,
+                subject_id=credits_subject_id,
+                free_limit=credits_free_limit,
+                cost_credits=credits_cost,
+                require_auth_after_free=True,
                 is_authenticated=user is not None,
             )
+            credits_mode = preflight.mode
         except PermissionError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -352,75 +683,55 @@ async def generate_music(
                 detail="Insufficient credits for music generation",
             )
 
-    audio_bytes, ext, media_type = await _provider_generate_music(
-        request, prompt=prompt, model=model, user=user
-    )
+    prompt = (form_data.prompt or "").strip()
+    plan = (form_data.composition_plan or "").strip()
 
-    audio_id = uuid.uuid4().hex
-    file_path, meta_path = _music_cache_paths(audio_id=audio_id, ext=ext)
+    if bool(prompt) == bool(plan):
+        raise HTTPException(status_code=422, detail="Provide exactly one of prompt or composition_plan")
 
-    try:
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(audio_bytes)
-        async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
-            await f.write(
-                json.dumps(
-                    {"prompt": prompt, "model": model, "ext": ext, "media_type": media_type},
-                    ensure_ascii=False,
-                )
-            )
-    except Exception as e:
-        log.exception(e)
-        raise HTTPException(status_code=500, detail="Failed to store generated music")
+    length_ms = 30000 if form_data.music_length_ms is None else int(form_data.music_length_ms or 0)
+    if length_ms <= 0:
+        raise HTTPException(status_code=422, detail="music_length_ms must be a positive integer")
+    if length_ms > _max_length_ms(request):
+        raise HTTPException(status_code=422, detail="music_length_ms exceeds max allowed length")
 
-    charged_paid = False
-    if not is_admin and redis is not None and subject_id and preflight and free_limit is not None:
-        try:
-            _status_after, charged_paid = await commit_generation(
-                redis,
-                domain="music",
-                subject_id=subject_id,
-                free_limit=free_limit,
-                mode=preflight.mode,
-                cost_credits=cost or 0,
-                now_ts=int(time.time()),
-            )
-        except Exception:
-            log.exception("Failed to commit music credits charge")
+    output_format = (form_data.output_format or _default_format(request) or "").strip()
+    model_id = (form_data.model_id or _default_model_id(request) or "").strip()
 
-    data_url = None
-    try:
-        if len(audio_bytes) <= 8 * 1024 * 1024:
-            data_url = f"data:{media_type};base64,{base64.b64encode(audio_bytes).decode('utf-8')}"
-    except Exception:
-        data_url = None
+    ext = _ext_from_output_format(output_format)
 
-    play_url = f"/api/v1/music/{audio_id}"
-    download_url = f"/api/v1/music/{audio_id}/download"
-
-    return {
-        "id": audio_id,
-        "ext": _sanitize_ext(ext),
-        "media_type": media_type or _guess_media_type_for_ext(ext),
-        "data_url": data_url,
-        "play_url": play_url,
-        "download_url": download_url,
-        "charged": bool(charged_paid),
+    payload: dict = {
+        "music_length_ms": length_ms,
+        "output_format": output_format,
+        "force_instrumental": bool(form_data.force_instrumental or False),
+        "model_id": model_id,
+        **({"prompt": prompt} if prompt else {"composition_plan": plan}),
     }
 
+    created = await _cache_set_pending_nx(request, request_id, ttl_seconds=MUSIC_REQUEST_TTL_SECONDS)
+    if not created:
+        return {"status": "pending"}
 
-def _find_cached_music_file(audio_id: str) -> tuple[Path, str, str] | None:
-    audio_id = str(audio_id or "").strip()
-    if not audio_id:
-        return None
-
-    for p in MUSIC_CACHE_DIR.glob(f"{audio_id}.*"):
-        if p.name.endswith(".json"):
-            continue
-        ext = _sanitize_ext(p.suffix)
-        media_type = _guess_media_type_for_ext(ext)
-        return p, ext, media_type
-    return None
+    asyncio.create_task(
+        _run_generation_and_cache(
+            request,
+            request_id=request_id,
+            payload=payload,
+            length_ms=length_ms,
+            output_format=output_format,
+            model_id=model_id,
+            ext=ext,
+            prompt=prompt,
+            plan=plan,
+            user=user,
+            form_data=form_data,
+            credits_subject_id=credits_subject_id,
+            credits_free_limit=credits_free_limit,
+            credits_mode=credits_mode,
+            credits_cost=int(credits_cost or 0),
+        )
+    )
+    return {"status": "pending"}
 
 
 @router.get("/{audio_id}")
@@ -438,9 +749,4 @@ async def download_music(audio_id: str):
     if not found:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio not found")
     file_path, ext, media_type = found
-    return FileResponse(
-        file_path,
-        media_type=media_type,
-        filename=f"music-{audio_id}.{ext}",
-    )
-
+    return FileResponse(file_path, media_type=media_type, filename=f"music-{audio_id}.{ext}")

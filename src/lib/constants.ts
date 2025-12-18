@@ -1,10 +1,12 @@
 import { browser, dev } from '$app/environment';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 // import { version } from '../../package.json';
 
-export const APP_NAME = '???';
+export const APP_NAME = 'აია';
 
 export const WEBUI_HOSTNAME = browser ? (dev ? `${location.hostname}:8080` : ``) : '';
-export const WEBUI_BASE_URL = browser ? (dev ? `http://${WEBUI_HOSTNAME}` : ``) : ``;
+const _publicApiBaseUrl = (PUBLIC_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+export const WEBUI_BASE_URL = browser ? (_publicApiBaseUrl ? _publicApiBaseUrl : dev ? `http://${WEBUI_HOSTNAME}` : ``) : ``;
 export const WEBUI_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1`;
 
 export const OLLAMA_API_BASE_URL = `${WEBUI_BASE_URL}/ollama`;
@@ -14,6 +16,7 @@ export const IMAGES_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/images`;
 export const MUSIC_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/music`;
 export const VIDEO_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/video`;
 export const PY_PHOTO_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/py_photo`;
+export const PDF_GENERATOR_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/pdf_generator`;
 export const RETRIEVAL_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1/retrieval`;
 
 export const WEBUI_VERSION = APP_VERSION;

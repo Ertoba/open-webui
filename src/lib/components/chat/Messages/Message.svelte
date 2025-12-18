@@ -43,6 +43,7 @@
 	export let downloadVoiceUnavailableMessage = '';
 
 	export let pyPhotoEnabled = false;
+	export let pdfEnabled = false;
 
 	export let addMessages;
 	export let triggerScroll;
@@ -89,6 +90,7 @@
 				{downloadVoiceVoice}
 				{downloadVoiceUnavailableMessage}
 				{pyPhotoEnabled}
+				{pdfEnabled}
 				isLastMessage={messageId === history.currentId}
 				siblings={history.messages[history.messages[messageId].parentId]?.childrenIds ?? []}
 				{setInputText}
@@ -119,6 +121,7 @@
 				{downloadVoiceVoice}
 				{downloadVoiceUnavailableMessage}
 				{pyPhotoEnabled}
+				{pdfEnabled}
 				isLastMessage={messageId === history?.currentId}
 				{setInputText}
 				{updateChat}

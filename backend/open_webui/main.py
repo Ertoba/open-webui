@@ -72,6 +72,7 @@ from open_webui.routers import (
     audio,
     music,
     video,
+    pdf_generator,
     py_photo,
     images,
     ollama,
@@ -231,6 +232,13 @@ from open_webui.config import (
     MUSIC_CREDITS_COST,
     MUSIC_CREDITS_PACKAGES,
     # Music / Video API
+    ELEVENLABS_API_KEY,
+    ELEVENLABS_MUSIC_ENABLED,
+    ELEVENLABS_MUSIC_DEFAULT_FORMAT,
+    ELEVENLABS_MUSIC_MODE,
+    ELEVENLABS_MUSIC_MODEL_ID,
+    ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS,
+    ELEVENLABS_MUSIC_MAX_LENGTH_MS,
     ENABLE_MUSIC_GENERATION,
     MUSIC_API_BASE_URL,
     MUSIC_API_KEY,
@@ -241,6 +249,7 @@ from open_webui.config import (
     VIDEO_API_KEY,
     VIDEO_API_GENERATE_PATH,
     VIDEO_MODEL,
+    ENABLE_PDF_GENERATOR,
     PLAYWRIGHT_WS_URL,
     PLAYWRIGHT_TIMEOUT,
     FIRECRAWL_API_BASE_URL,
@@ -1254,6 +1263,14 @@ app.state.config.MUSIC_CREDITS_FREE_AUTH = MUSIC_CREDITS_FREE_AUTH
 app.state.config.MUSIC_CREDITS_COST = MUSIC_CREDITS_COST
 app.state.config.MUSIC_CREDITS_PACKAGES = MUSIC_CREDITS_PACKAGES
 
+app.state.config.ELEVENLABS_API_KEY = ELEVENLABS_API_KEY
+app.state.config.ELEVENLABS_MUSIC_ENABLED = ELEVENLABS_MUSIC_ENABLED
+app.state.config.ELEVENLABS_MUSIC_DEFAULT_FORMAT = ELEVENLABS_MUSIC_DEFAULT_FORMAT
+app.state.config.ELEVENLABS_MUSIC_MODE = ELEVENLABS_MUSIC_MODE
+app.state.config.ELEVENLABS_MUSIC_MODEL_ID = ELEVENLABS_MUSIC_MODEL_ID
+app.state.config.ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS = ELEVENLABS_MUSIC_DEFAULT_LENGTH_MS
+app.state.config.ELEVENLABS_MUSIC_MAX_LENGTH_MS = ELEVENLABS_MUSIC_MAX_LENGTH_MS
+
 app.state.config.ENABLE_MUSIC_GENERATION = ENABLE_MUSIC_GENERATION
 app.state.config.MUSIC_API_BASE_URL = MUSIC_API_BASE_URL
 app.state.config.MUSIC_API_KEY = MUSIC_API_KEY
@@ -1265,6 +1282,8 @@ app.state.config.VIDEO_API_BASE_URL = VIDEO_API_BASE_URL
 app.state.config.VIDEO_API_KEY = VIDEO_API_KEY
 app.state.config.VIDEO_API_GENERATE_PATH = VIDEO_API_GENERATE_PATH
 app.state.config.VIDEO_MODEL = VIDEO_MODEL
+
+app.state.config.ENABLE_PDF_GENERATOR = ENABLE_PDF_GENERATOR
 
 
 app.state.faster_whisper_model = None
@@ -1477,6 +1496,7 @@ app.include_router(images.router, prefix="/api/v1/images", tags=["images"])
 app.include_router(audio.router, prefix="/api/v1/audio", tags=["audio"])
 app.include_router(music.router, prefix="/api/v1/music", tags=["music"])
 app.include_router(video.router, prefix="/api/v1/video", tags=["video"])
+app.include_router(pdf_generator.router, prefix="/api/v1/pdf_generator", tags=["pdf-generator"])
 app.include_router(py_photo.router, prefix="/api/v1/py_photo", tags=["py-photo"])
 app.include_router(retrieval.router, prefix="/api/v1/retrieval", tags=["retrieval"])
 
@@ -2481,15 +2501,16 @@ async def get_manifest_json():
 
 
 @app.get("/opensearch.xml")
-async def get_opensearch_xml():
-    xml_content = rf"""
+async def get_opensearch_xml(request: Request):
+    base_url = (app.state.config.WEBUI_URL or str(request.base_url)).rstrip("/")
+    xml_content = f"""
     <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/" xmlns:moz="http://www.mozilla.org/2006/browser/search/">
     <ShortName>{app.state.WEBUI_NAME}</ShortName>
     <Description>Search {app.state.WEBUI_NAME}</Description>
     <InputEncoding>UTF-8</InputEncoding>
-    <Image width="16" height="16" type="image/x-icon">{app.state.config.WEBUI_URL}/static/favicon.png</Image>
-    <Url type="text/html" method="get" template="{app.state.config.WEBUI_URL}/?q={"{searchTerms}"}"/>
-    <moz:SearchForm>{app.state.config.WEBUI_URL}</moz:SearchForm>
+    <Image width="16" height="16" type="image/x-icon">{base_url}/static/favicon.png</Image>
+    <Url type="text/html" method="get" template="{base_url}/?q={{searchTerms}}"/>
+    <moz:SearchForm>{base_url}</moz:SearchForm>
     </OpenSearchDescription>
     """
     return Response(content=xml_content, media_type="application/xml")

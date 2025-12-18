@@ -820,7 +820,7 @@
 										class="w-full h-full outline-none resize-none"
 										bind:value={selectedFileContent}
 										placeholder={$i18n.t('Add content here')}
-									/>
+									></textarea>
 								{/key}
 							</div>
 						</div>
@@ -883,7 +883,7 @@
 										class="w-full h-full outline-none resize-none"
 										bind:value={selectedFileContent}
 										placeholder={$i18n.t('Add content here')}
-									/>
+									></textarea>
 								{/key}
 							</div>
 						</div>

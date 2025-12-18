@@ -4,11 +4,12 @@ import logging
 import mimetypes
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 
 import aiofiles
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -16,6 +17,7 @@ from open_webui.config import CACHE_DIR
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT, SRC_LOG_LEVELS
 from open_webui.utils.auth import get_admin_user, get_verified_user_or_none
 from open_webui.utils.domain_credits import commit_generation, preflight_generation
+from open_webui.routers.files import upload_file_handler
 
 log = logging.getLogger(__name__)
 log.setLevel(SRC_LOG_LEVELS.get("ROUTERS", logging.INFO))
@@ -179,6 +181,7 @@ class VideoGenerateResponse(BaseModel):
     play_url: str
     download_url: str
     charged: bool = False
+    file_id: str | None = None
 
 
 async def _fetch_bytes_from_url(url: str, *, headers: dict | None = None) -> tuple[bytes, str]:
@@ -398,6 +401,27 @@ async def generate_video(
     play_url = f"/api/v1/video/{video_id}"
     download_url = f"/api/v1/video/{video_id}/download"
 
+    file_id: str | None = None
+    if user is not None:
+        try:
+            meta = {
+                "generated": True,
+                "source": "video",
+                "prompt": prompt,
+                "model": model,
+                "ext": _sanitize_ext(ext),
+                "media_type": media_type,
+            }
+            upload = UploadFile(
+                file=BytesIO(video_bytes),
+                filename=f"video-{video_id}.{_sanitize_ext(ext)}",
+                headers={"content-type": media_type or _guess_media_type_for_ext(ext)},
+            )
+            file_item = upload_file_handler(request, file=upload, metadata=meta, process=False, user=user)
+            file_id = getattr(file_item, "id", None)
+        except Exception:
+            file_id = None
+
     return {
         "id": video_id,
         "ext": _sanitize_ext(ext),
@@ -406,6 +430,7 @@ async def generate_video(
         "play_url": play_url,
         "download_url": download_url,
         "charged": bool(charged_paid),
+        "file_id": file_id,
     }
 
 
@@ -443,4 +468,3 @@ async def download_video(video_id: str):
         media_type=media_type,
         filename=f"video-{video_id}.{ext}",
     )
-

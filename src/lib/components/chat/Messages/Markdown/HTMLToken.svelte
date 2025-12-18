@@ -8,6 +8,8 @@
 	export let id: string;
 	export let token: Token;
 
+	void id;
+
 	let html: string | null = null;
 
 	$: if (token.type === 'html' && token?.text) {

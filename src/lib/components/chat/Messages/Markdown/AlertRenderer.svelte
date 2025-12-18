@@ -77,6 +77,8 @@
 	export let tokenIdx = 0;
 	export let onTaskClick: ((event: MouseEvent) => void) | undefined = undefined;
 	export let onSourceClick: ((event: MouseEvent) => void) | undefined = undefined;
+
+	void token;
 </script>
 
 <!--

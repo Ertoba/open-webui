@@ -7,6 +7,7 @@ import time
 import html
 import base64
 import re
+from io import BytesIO
 from functools import lru_cache
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
@@ -865,6 +866,7 @@ async def generate_voice(
         cache_key=cache_key,
     )
 
+    audio_bytes: bytes | None = None
     data_url: str | None = None
     try:
         async with aiofiles.open(file_path, "rb") as f:
@@ -873,6 +875,34 @@ async def generate_voice(
         data_url = f"data:{media_type};base64,{audio_b64}"
     except Exception:
         data_url = None
+
+    file_id: str | None = None
+    if user is not None and audio_bytes is not None:
+        try:
+            from open_webui.routers.files import upload_file_handler
+
+            upload = UploadFile(
+                file=BytesIO(audio_bytes),
+                filename=f"voice-{cache_key}.{ext}",
+                headers={"content-type": media_type},
+            )
+            file_item = upload_file_handler(
+                request,
+                file=upload,
+                metadata={
+                    "generated": True,
+                    "source": "voice",
+                    "voice": selected_voice,
+                    "ext": ext,
+                    "media_type": media_type,
+                    **({"message_id": form_data.message_id} if form_data.message_id else {}),
+                },
+                process=False,
+                user=user,
+            )
+            file_id = getattr(file_item, "id", None)
+        except Exception:
+            file_id = None
 
     charged = False
     if not is_admin and credits_needed > 0 and redis is not None and subject_id and now_ts and status_before:
@@ -919,6 +949,7 @@ async def generate_voice(
         "play_url": play_url,
         "download_url": download_url,
         "charged": charged,
+        "file_id": file_id,
     }
 
 

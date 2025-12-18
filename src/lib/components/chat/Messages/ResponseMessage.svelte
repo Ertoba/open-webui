@@ -50,6 +50,7 @@
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 	import Camera from '$lib/components/icons/Camera.svelte';
+	import MusicalNote from '$lib/components/icons/MusicalNote.svelte';
 
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
@@ -65,6 +66,269 @@
 	import RegenerateMenu from './ResponseMessage/RegenerateMenu.svelte';
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
+
+	let musicAudioEl: HTMLAudioElement | null = null;
+	let musicCanvasEl: HTMLCanvasElement | null = null;
+	let musicVisualizerEl: HTMLDivElement | null = null;
+
+	let musicAudioContext: AudioContext | null = null;
+	let musicAnalyser: AnalyserNode | null = null;
+	let musicSourceNode: MediaElementAudioSourceNode | null = null;
+	let musicAnimationId: number | null = null;
+	let musicResizeObserver: ResizeObserver | null = null;
+	let musicCanvasCssWidth = 0;
+	let musicCanvasCssHeight = 0;
+	let musicDpr = 1;
+	let musicIsPlaying = false;
+	let musicLastSrc = '';
+	let musicSrc = '';
+	let musicDownloadHref = '';
+	let videoSrc = '';
+	let videoDownloadHref = '';
+	let pyPhotoSrc = '';
+	let pyPhotoDownloadHref = '';
+
+	const fileContentUrl = (fileId: string | undefined) =>
+		fileId ? `${WEBUI_API_BASE_URL}/files/${fileId}/content` : '';
+
+	const fileDownloadUrl = (fileId: string | undefined) =>
+		fileId ? `${WEBUI_API_BASE_URL}/files/${fileId}/content?attachment=true` : '';
+
+	const normalizeMediaUrl = (url: string | undefined) => {
+		const value = String(url ?? '').trim();
+		if (!value) return '';
+		if (
+			value.startsWith('http://') ||
+			value.startsWith('https://') ||
+			value.startsWith('data:') ||
+			value.startsWith('blob:')
+		) {
+			return value;
+		}
+		return `${WEBUI_BASE_URL}${value.startsWith('/') ? '' : '/'}${value}`;
+	};
+
+	let musicFileIdLoaded = '';
+	let musicFileBlobUrl = '';
+	let musicFileBlob: Blob | null = null;
+	let musicFileLoading = false;
+	let musicFileError = '';
+	let musicFileAbort: AbortController | null = null;
+
+	const revokeObjectUrl = (url: string) => {
+		if (!url) return;
+		try {
+			URL.revokeObjectURL(url);
+		} catch {
+			// ignore
+		}
+	};
+
+	const cleanupMusicFileBlob = () => {
+		try {
+			musicFileAbort?.abort();
+		} catch {
+			// ignore
+		}
+		musicFileAbort = null;
+		musicFileIdLoaded = '';
+		musicFileBlob = null;
+		revokeObjectUrl(musicFileBlobUrl);
+		musicFileBlobUrl = '';
+		musicFileLoading = false;
+		musicFileError = '';
+	};
+
+	const fetchAuthedFileBlob = async (fileId: string, signal: AbortSignal) => {
+		const token = typeof window !== 'undefined' ? localStorage.token : '';
+		const headers: Record<string, string> = {};
+		if (token) headers.authorization = `Bearer ${token}`;
+
+		const res = await fetch(fileContentUrl(fileId), {
+			method: 'GET',
+			headers,
+			credentials: token ? 'same-origin' : 'include',
+			signal
+		});
+
+		if (!res.ok) {
+			throw new Error(`Failed to load file (${res.status})`);
+		}
+
+		return await res.blob();
+	};
+
+	const stopMusicLoop = () => {
+		if (musicAnimationId != null) {
+			cancelAnimationFrame(musicAnimationId);
+			musicAnimationId = null;
+		}
+	};
+
+	const resizeMusicCanvas = () => {
+		if (!musicCanvasEl || !musicVisualizerEl) return;
+		const w = Math.max(1, Math.floor(musicVisualizerEl.clientWidth));
+		const h = Math.max(1, Math.floor(musicVisualizerEl.clientHeight));
+		musicDpr = Math.min(2, window.devicePixelRatio || 1);
+		musicCanvasEl.width = Math.floor(w * musicDpr);
+		musicCanvasEl.height = Math.floor(h * musicDpr);
+		musicCanvasEl.style.width = `${w}px`;
+		musicCanvasEl.style.height = `${h}px`;
+		musicCanvasCssWidth = w;
+		musicCanvasCssHeight = h;
+		const ctx = musicCanvasEl.getContext('2d');
+		if (ctx) ctx.setTransform(musicDpr, 0, 0, musicDpr, 0, 0);
+	};
+
+	const ensureMusicGraph = async () => {
+		if (!musicAudioEl) return;
+		if (!musicAudioContext) {
+			musicAudioContext = new AudioContext();
+		}
+		if (musicAudioContext.state === 'suspended') {
+			try {
+				await musicAudioContext.resume();
+			} catch {
+				// ignore
+			}
+		}
+		if (!musicAnalyser) {
+			musicAnalyser = musicAudioContext.createAnalyser();
+			musicAnalyser.fftSize = 2048;
+			musicAnalyser.smoothingTimeConstant = 0.85;
+		}
+		if (!musicSourceNode) {
+			musicSourceNode = musicAudioContext.createMediaElementSource(musicAudioEl);
+			musicSourceNode.connect(musicAnalyser);
+			musicAnalyser.connect(musicAudioContext.destination);
+		}
+	};
+
+	const drawMusicWaveform = () => {
+		if (!musicCanvasEl) return;
+		const ctx = musicCanvasEl.getContext('2d');
+		if (!ctx) return;
+
+		const width = musicCanvasCssWidth;
+		const height = musicCanvasCssHeight;
+		if (width <= 0 || height <= 0) return;
+
+		ctx.clearRect(0, 0, width, height);
+
+		const midY = height / 2;
+		const baseColor = musicVisualizerEl ? getComputedStyle(musicVisualizerEl).color : '#6b7280';
+
+		// Baseline
+		ctx.save();
+		ctx.strokeStyle = baseColor;
+		ctx.globalAlpha = 0.22;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.moveTo(0, midY);
+		ctx.lineTo(width, midY);
+		ctx.stroke();
+		ctx.restore();
+
+		if (!musicAnalyser || !musicIsPlaying) return;
+
+		const timeData = new Uint8Array(musicAnalyser.fftSize);
+		musicAnalyser.getByteTimeDomainData(timeData);
+
+		const amplitude = Math.max(6, height * 0.42);
+		const stepX = width / (timeData.length - 1);
+
+		// Soft outer stroke (no glow)
+		ctx.save();
+		ctx.lineJoin = 'round';
+		ctx.lineCap = 'round';
+		ctx.strokeStyle = baseColor;
+		ctx.globalAlpha = 0.10;
+		ctx.lineWidth = 3;
+		ctx.beginPath();
+		for (let i = 0; i < timeData.length; i++) {
+			const v = (timeData[i] - 128) / 128;
+			const x = i * stepX;
+			const y = midY + v * amplitude;
+			if (i === 0) ctx.moveTo(x, y);
+			else ctx.lineTo(x, y);
+		}
+		ctx.stroke();
+		ctx.restore();
+
+		// Main stroke
+		ctx.save();
+		ctx.lineJoin = 'round';
+		ctx.lineCap = 'round';
+		ctx.strokeStyle = baseColor;
+		ctx.globalAlpha = 0.38;
+		ctx.lineWidth = 1.4;
+		ctx.beginPath();
+		for (let i = 0; i < timeData.length; i++) {
+			const v = (timeData[i] - 128) / 128;
+			const x = i * stepX;
+			const y = midY + v * amplitude;
+			if (i === 0) ctx.moveTo(x, y);
+			else ctx.lineTo(x, y);
+		}
+		ctx.stroke();
+		ctx.restore();
+
+		musicAnimationId = requestAnimationFrame(drawMusicWaveform);
+	};
+
+	const onMusicPlay = async () => {
+		musicIsPlaying = true;
+		await ensureMusicGraph();
+		stopMusicLoop();
+		resizeMusicCanvas();
+		drawMusicWaveform();
+	};
+
+	const onMusicPause = () => {
+		musicIsPlaying = false;
+		stopMusicLoop();
+		drawMusicWaveform();
+	};
+
+	const ensureMusicVisualizer = () => {
+		if (!musicVisualizerEl || !musicCanvasEl || musicResizeObserver) return;
+		musicResizeObserver = new ResizeObserver(() => {
+			resizeMusicCanvas();
+			if (musicIsPlaying) stopMusicLoop();
+			drawMusicWaveform();
+		});
+		musicResizeObserver.observe(musicVisualizerEl);
+		resizeMusicCanvas();
+		drawMusicWaveform();
+	};
+
+	const destroyMusicVisualizer = async () => {
+		stopMusicLoop();
+		try {
+			musicResizeObserver?.disconnect();
+		} catch {
+			// ignore
+		}
+		musicResizeObserver = null;
+
+		try {
+			musicSourceNode?.disconnect();
+			musicAnalyser?.disconnect();
+		} catch {
+			// ignore
+		}
+		musicSourceNode = null;
+		musicAnalyser = null;
+
+		if (musicAudioContext) {
+			try {
+				await musicAudioContext.close();
+			} catch {
+				// ignore
+			}
+		}
+		musicAudioContext = null;
+	};
 
 	interface MessageType {
 		id: string;
@@ -131,7 +395,9 @@
 			enabled: boolean;
 			status?: 'pending' | 'generating' | 'ready' | 'error';
 			error?: string;
+			prompt?: string;
 			id?: string;
+			file_id?: string;
 			ext?: string;
 			media_type?: string;
 			data_url?: string;
@@ -143,6 +409,7 @@
 			status?: 'pending' | 'generating' | 'ready' | 'error';
 			error?: string;
 			id?: string;
+			file_id?: string;
 			ext?: string;
 			media_type?: string;
 			data_url?: string;
@@ -154,6 +421,7 @@
 			status?: 'pending' | 'generating' | 'ready' | 'error';
 			error?: string;
 			id?: string;
+			file_id?: string;
 			media_type?: string;
 			data_url?: string;
 			view_url?: string;
@@ -175,6 +443,79 @@
 	$: if (history.messages) {
 		if (JSON.stringify(message) !== JSON.stringify(history.messages[messageId])) {
 			message = JSON.parse(JSON.stringify(history.messages[messageId]));
+		}
+	}
+
+	const compactTitle = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+	$: musicSrc = message?.music?.data_url ?? musicFileBlobUrl;
+	$: musicDownloadHref = message?.music?.data_url ?? '';
+
+	$: if (typeof window !== 'undefined') {
+		const fileId = (message?.music?.file_id ?? '').trim();
+		const wantsBlob = Boolean(
+			fileId && message?.music?.enabled && message?.music?.status === 'ready' && !message?.music?.data_url
+		);
+
+		if (!wantsBlob) {
+			if (musicFileBlobUrl || musicFileIdLoaded) cleanupMusicFileBlob();
+		} else if (fileId !== musicFileIdLoaded && !musicFileLoading) {
+			try {
+				musicFileAbort?.abort();
+			} catch {
+				// ignore
+			}
+			const controller = new AbortController();
+			musicFileAbort = controller;
+			musicFileLoading = true;
+			musicFileError = '';
+			musicFileBlob = null;
+			revokeObjectUrl(musicFileBlobUrl);
+			musicFileBlobUrl = '';
+
+			void fetchAuthedFileBlob(fileId, controller.signal)
+				.then((blob) => {
+					if (controller.signal.aborted || musicFileAbort !== controller) return;
+					musicFileBlob = blob;
+					musicFileBlobUrl = URL.createObjectURL(blob);
+					musicFileIdLoaded = fileId;
+				})
+				.catch((e) => {
+					if (controller.signal.aborted || musicFileAbort !== controller) return;
+					musicFileError = typeof e === 'string' ? e : `${e}`;
+					musicFileIdLoaded = fileId;
+				})
+				.finally(() => {
+					if (controller.signal.aborted || musicFileAbort !== controller) return;
+					musicFileLoading = false;
+				});
+		}
+	}
+
+	$: {
+		videoSrc = message?.video?.data_url ?? normalizeMediaUrl(message?.video?.play_url);
+		videoDownloadHref =
+			message?.video?.data_url ?? normalizeMediaUrl(message?.video?.download_url);
+	}
+
+	$: pyPhotoSrc =
+		message?.py_photo?.data_url ?? fileContentUrl(message?.py_photo?.file_id);
+	$: pyPhotoDownloadHref =
+		message?.py_photo?.data_url ?? fileDownloadUrl(message?.py_photo?.file_id);
+
+	$: {
+		const src = musicSrc;
+		if (src && src !== musicLastSrc) {
+			musicLastSrc = src;
+			onMusicPause();
+		}
+
+		// Initialize visualizer when the audio UI appears.
+		const ready = Boolean(message?.music?.enabled && message?.music?.status === 'ready' && src);
+		const _vis = musicVisualizerEl;
+		const _canvas = musicCanvasEl;
+		if (ready && _vis && _canvas) {
+			ensureMusicVisualizer();
 		}
 	}
 
@@ -255,6 +596,32 @@
 					error: errMsg || $i18n.t('Insufficient credits for voice generation')
 				}
 			});
+		}
+	};
+
+	const downloadMusicFile = async () => {
+		const fileId = message?.music?.file_id;
+		if (!fileId) return;
+
+		const ext = message?.music?.ext ?? 'mp3';
+		const filename = `music-${message.id}.${ext}`;
+
+		try {
+			const blob = musicFileBlob
+				? musicFileBlob
+				: await fetchAuthedFileBlob(fileId, new AbortController().signal);
+
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			window.setTimeout(() => revokeObjectUrl(url), 0);
+		} catch (e) {
+			const msg = typeof e === 'string' ? e : `${e}`;
+			toast.error(msg);
 		}
 	};
 
@@ -793,6 +1160,9 @@
 		if (contentContainerElement) {
 			contentContainerElement.removeEventListener('copy', contentCopyHandler);
 		}
+
+		void destroyMusicVisualizer();
+		cleanupMusicFileBlob();
 	});
 </script>
 
@@ -911,7 +1281,7 @@
 											document.getElementById('confirm-edit-message-button')?.click();
 										}
 									}}
-								/>
+								></textarea>
 
 								<div class=" mt-2 mb-1 flex justify-between text-sm font-medium">
 									<div>
@@ -956,7 +1326,14 @@
 							class="w-full flex flex-col relative {edit ? 'hidden' : ''}"
 							id="response-content-container"
 						>
-							{#if message.content === '' && !message.error && ((model?.info?.meta?.capabilities?.status_updates ?? true) ? (message?.statusHistory ?? [...(message?.status ? [message?.status] : [])]).length === 0 || (message?.statusHistory?.at(-1)?.hidden ?? false) : true)}
+							{#if message.content === '' &&
+							!message.error &&
+							!message?.music?.enabled &&
+							!message?.video?.enabled &&
+							((model?.info?.meta?.capabilities?.status_updates ?? true)
+								? (message?.statusHistory ?? [...(message?.status ? [message?.status] : [])]).length === 0 ||
+									(message?.statusHistory?.at(-1)?.hidden ?? false)
+								: true)}
 								<Skeleton />
 							{:else if message.content && message.error !== true}
 								<!-- always show message contents even if there's an error -->
@@ -1725,45 +2102,90 @@
 					</div>
 
 					{#if message?.music?.enabled}
-						{#if message.music?.status === 'generating'}
-							<div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-								{$i18n.t('Generating music...')}
-							</div>
-						{:else if message.music?.status === 'ready' && (message.music?.data_url || message.music?.play_url)}
-							<div class="mt-2 flex items-center gap-2">
-								<audio
-									class="h-8 w-full max-w-xs"
-									controls
-									preload="none"
-									src={message.music.data_url ?? message.music.play_url}
-								/>
+						<div
+							class="mt-2 w-full max-w-md rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm hover:shadow-md focus-within:shadow-md"
+						>
+							<div class="p-3 flex flex-col gap-3">
+								<div class="flex items-center gap-2 min-w-0">
+									<MusicalNote className="size-4" strokeWidth="1.75" />
+									<div
+										class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate"
+										title={compactTitle(message.music?.prompt) || $i18n.t('Music')}
+									>
+										{compactTitle(message.music?.prompt) || $i18n.t('Music')}
+									</div>
+								</div>
 
-								{#if message.music?.data_url}
-									<a
-										href={message.music.data_url}
-										class="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition"
-										aria-label={$i18n.t('Download')}
-										download={`music-${message.id}.${message.music.ext ?? 'mp3'}`}
+								{#if message.music?.status === 'ready' && musicSrc}
+									<div
+										bind:this={musicVisualizerEl}
+										class="h-9 w-full rounded-lg bg-gray-50 dark:bg-gray-800/40 overflow-hidden text-gray-500 dark:text-gray-400"
 									>
-										<Download className="w-4 h-4" strokeWidth="2" />
-									</a>
-								{:else if message.music?.download_url}
-									<a
-										href={message.music.download_url}
-										class="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition"
-										aria-label={$i18n.t('Download')}
-										target="_blank"
-										rel="noreferrer"
-									>
-										<Download className="w-4 h-4" strokeWidth="2" />
-									</a>
+										<canvas bind:this={musicCanvasEl} class="w-full h-full" aria-hidden="true"
+										></canvas>
+									</div>
+
+									<audio
+										bind:this={musicAudioEl}
+										class="w-full h-9"
+										controls
+										preload="none"
+										crossorigin="anonymous"
+										src={musicSrc}
+										on:play={onMusicPlay}
+										on:pause={onMusicPause}
+										on:ended={onMusicPause}
+									></audio>
+								{/if}
+
+								<div class="flex items-center justify-between gap-2">
+									<div class="text-xs text-gray-500 dark:text-gray-400">
+										{#if message.music?.status === 'generating'}
+											{$i18n.t('Generating music...')}
+										{:else if message.music?.status === 'ready' && !musicSrc && musicFileLoading}
+											{$i18n.t('Loading...')}
+										{:else if message.music?.status === 'ready'}
+											{$i18n.t('Ready')}
+										{:else if message.music?.status === 'error'}
+											{$i18n.t('Error')}
+										{/if}
+									</div>
+
+									{#if message.music?.status === 'ready' && (message.music?.data_url || message.music?.file_id)}
+										{#if message.music?.data_url}
+											<a
+												href={musicDownloadHref}
+												class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition text-sm"
+												aria-label={$i18n.t('Download')}
+												download={`music-${message.id}.${message.music.ext ?? 'mp3'}`}
+											>
+												<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
+											</a>
+										{:else}
+											<button
+												type="button"
+												class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition text-sm disabled:opacity-60 disabled:pointer-events-none"
+												aria-label={$i18n.t('Download')}
+												disabled={!message.music?.file_id}
+												on:click={downloadMusicFile}
+											>
+												<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
+											</button>
+										{/if}
+									{/if}
+								</div>
+
+								{#if message.music?.status === 'error' && message.music?.error}
+									<div class="text-xs text-amber-600 dark:text-amber-400">
+										{message.music.error}
+									</div>
+								{/if}
+
+								{#if message.music?.status === 'ready' && musicFileError}
+									<div class="text-xs text-amber-600 dark:text-amber-400">{musicFileError}</div>
 								{/if}
 							</div>
-						{:else if message.music?.status === 'error' && message.music?.error}
-							<div class="mt-2 text-xs text-amber-600 dark:text-amber-400">
-								{message.music.error}
-							</div>
-						{/if}
+						</div>
 					{/if}
 
 					{#if message?.video?.enabled}
@@ -1771,14 +2193,14 @@
 							<div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
 								{$i18n.t('Generating video...')}
 							</div>
-						{:else if message.video?.status === 'ready' && (message.video?.data_url || message.video?.play_url)}
+						{:else if message.video?.status === 'ready' && videoSrc}
 							<div class="mt-2 flex items-start gap-2">
 								<video
 									class="w-full max-w-md rounded-xl border border-gray-100 dark:border-gray-800"
 									controls
 									preload="none"
-									src={message.video.data_url ?? message.video.play_url}
-								/>
+									src={videoSrc}
+								></video>
 
 								{#if message.video?.data_url}
 									<a
@@ -1789,9 +2211,9 @@
 									>
 										<Download className="w-4 h-4" strokeWidth="2" />
 									</a>
-								{:else if message.video?.download_url}
+								{:else if videoDownloadHref}
 									<a
-										href={message.video.download_url}
+										href={videoDownloadHref}
 										class="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition"
 										aria-label={$i18n.t('Download')}
 										target="_blank"
@@ -1813,10 +2235,10 @@
 							<div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
 								{$i18n.t('Generating image...')}
 							</div>
-						{:else if message.py_photo?.status === 'ready' && (message.py_photo?.data_url || message.py_photo?.view_url)}
+						{:else if message.py_photo?.status === 'ready' && pyPhotoSrc}
 							<div class="mt-2 flex flex-col gap-2">
 								<img
-									src={message.py_photo.data_url ?? message.py_photo.view_url}
+									src={pyPhotoSrc}
 									alt="PY Photo"
 									class="w-full max-w-md rounded-xl border border-gray-100 dark:border-gray-800"
 									loading="lazy"
@@ -1833,9 +2255,9 @@
 										>
 											<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
 										</a>
-									{:else if message.py_photo?.download_url}
+									{:else if pyPhotoDownloadHref}
 										<a
-											href={message.py_photo.download_url}
+											href={pyPhotoDownloadHref}
 											class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition text-sm"
 											aria-label={$i18n.t('Download')}
 											target="_blank"
@@ -1865,7 +2287,7 @@
 									controls
 									preload="none"
 									src={message.voice_download.data_url ?? message.voice_download.play_url}
-								/>
+								></audio>
 
 								{#if message.voice_download?.data_url}
 									<a

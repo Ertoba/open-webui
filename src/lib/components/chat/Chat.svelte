@@ -9,6 +9,7 @@
 
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { dev } from '$app/environment';
 
 	import { get, type Unsubscriber, type Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
@@ -42,7 +43,9 @@
 		functions,
 		selectedFolder,
 		pinnedChats,
-		showEmbeds
+		showEmbeds,
+		featureRegistry,
+		setChatGenerationMode
 	} from '$lib/stores';
 
 	import {
@@ -55,6 +58,7 @@
 		removeAllDetails,
 		getCodeBlockContents
 	} from '$lib/utils';
+	import { addGeneratedFile } from '$lib/utils/generatedFiles';
 	import { AudioQueue } from '$lib/utils/audio';
 
 	import {
@@ -70,7 +74,7 @@
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 	import { processWeb, processWebSearch, processYoutubeVideo } from '$lib/apis/retrieval';
 	import { getAndUpdateUserLocation, getUserSettings } from '$lib/apis/users';
-	import { generateMusic } from '$lib/apis/music';
+	import { generateMusic, getMusicRequest } from '$lib/apis/music';
 	import { generateVideo } from '$lib/apis/video';
 	import {
 		chatCompleted,
@@ -152,10 +156,184 @@
 	let videoEnabled = false;
 	let videoUnavailableMessage: string = '';
 
+	let pdfEnabled = false;
+
+	type ActiveGenerationMode = 'music' | 'video' | 'photo' | null;
+	let suppressGenerationModeRegistrySync = false;
+
+	$: {
+		// Derive active generation mode from enabled flags
+		const mode: ActiveGenerationMode = videoEnabled
+			? 'video'
+			: musicEnabled
+				? 'music'
+				: pyPhotoEnabled
+					? 'photo'
+					: null;
+
+		if (!suppressGenerationModeRegistrySync && $chatId) {
+			setChatGenerationMode($chatId, mode);
+		}
+
+		if (mode) {
+			if (webSearchEnabled) webSearchEnabled = false;
+			if (imageGenerationEnabled) imageGenerationEnabled = false;
+			if (codeInterpreterEnabled) codeInterpreterEnabled = false;
+
+			if (downloadVoiceEnabled) {
+				downloadVoiceEnabled = false;
+				downloadVoiceUnavailableMessage = '';
+			}
+
+			if (pdfEnabled) pdfEnabled = false;
+			if (selectedToolIds.length > 0) selectedToolIds = [];
+			if (selectedFilterIds.length > 0) selectedFilterIds = [];
+		}
+	}
+
+	const normalizeGenerationModes = () => {
+		const mode: ActiveGenerationMode = videoEnabled
+			? 'video'
+			: musicEnabled
+				? 'music'
+				: pyPhotoEnabled
+					? 'photo'
+					: null;
+
+		if (!mode) return;
+
+		if (mode !== 'music' && musicEnabled) {
+			musicEnabled = false;
+			musicUnavailableMessage = '';
+		}
+
+		if (mode !== 'video' && videoEnabled) {
+			videoEnabled = false;
+			videoUnavailableMessage = '';
+		}
+
+		if (mode !== 'photo' && pyPhotoEnabled) {
+			pyPhotoEnabled = false;
+		}
+	};
+
 	let showCommands = false;
 
 	let generating = false;
 	let generationController = null;
+
+	type MusicPollControl = { cancelled: boolean };
+	const musicPolls: Record<string, MusicPollControl> = {};
+
+	const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+	const finalizeMusicMessage = async (chatIdValue: string, responseMessageId: string, result: any) => {
+		const latest = history.messages[responseMessageId];
+		if (!latest) return;
+
+		history.messages[responseMessageId] = {
+			...latest,
+			done: true,
+			music: {
+				...(latest.music ?? {}),
+				...result,
+				enabled: true,
+				status: 'ready',
+				error: ''
+			}
+		};
+
+		history = history;
+		await tick();
+		await saveChatHandler(chatIdValue, JSON.parse(JSON.stringify(history)));
+
+		try {
+			addGeneratedFile({
+				id: String(result?.id ?? responseMessageId),
+				type: 'audio',
+				name: `music-${String(result?.id ?? responseMessageId)}.${result?.ext ?? 'mp3'}`,
+				url: result?.file_id ? `/api/v1/files/${result.file_id}/content` : (result?.data_url ?? ''),
+				createdAt: Date.now(),
+				mimeType: result?.media_type,
+				source: 'music',
+				fileId: result?.file_id ?? undefined
+			});
+		} catch {
+			// ignore
+		}
+	};
+
+	const failMusicMessage = async (
+		chatIdValue: string,
+		responseMessageId: string,
+		error: unknown
+	) => {
+		const errMsg = typeof error === 'string' ? error : `${error}`;
+		const latest = history.messages[responseMessageId];
+		if (!latest) return;
+
+		history.messages[responseMessageId] = {
+			...latest,
+			done: true,
+			music: {
+				...(latest.music ?? {}),
+				enabled: true,
+				status: 'error',
+				error: errMsg
+			}
+		};
+
+		history = history;
+		await tick();
+		await saveChatHandler(chatIdValue, JSON.parse(JSON.stringify(history)));
+	};
+
+	const pollMusicRequestUntilDone = async (
+		chatIdValue: string,
+		responseMessageId: string,
+		requestId: string
+	) => {
+		if (!chatIdValue || !responseMessageId || !requestId) return;
+		if (musicPolls[requestId]) return;
+
+		const control: MusicPollControl = { cancelled: false };
+		musicPolls[requestId] = control;
+
+		try {
+			let delayMs = 1000;
+			for (;;) {
+				if (control.cancelled) return;
+				if (get(chatId) !== chatIdValue) return;
+
+				const res = await getMusicRequest(localStorage.token, requestId);
+				if (res && (res as any).status === 'pending') {
+					await sleep(delayMs);
+					delayMs = Math.min(5000, Math.floor(delayMs * 1.35));
+					continue;
+				}
+
+				await finalizeMusicMessage(chatIdValue, responseMessageId, res);
+				return;
+			}
+		} catch (e) {
+			await failMusicMessage(chatIdValue, responseMessageId, e);
+		} finally {
+			delete musicPolls[requestId];
+		}
+	};
+
+	const resumePendingMusicRequests = (chatIdValue: string) => {
+		if (!chatIdValue) return;
+		if (!history?.messages) return;
+		for (const [id, msg] of Object.entries(history.messages)) {
+			const requestId = (msg as any)?.music?.request_id;
+			const status = (msg as any)?.music?.status;
+			const enabled = Boolean((msg as any)?.music?.enabled);
+			if (enabled && status === 'generating' && typeof requestId === 'string' && requestId) {
+				void pollMusicRequestUntilDone(chatIdValue, id, requestId);
+			}
+		}
+	};
 
 	let chat = null;
 	let tags = [];
@@ -179,6 +357,7 @@
 
 	const navigateHandler = async () => {
 		loading = true;
+		suppressGenerationModeRegistrySync = true;
 
 		prompt = '';
 		messageInput?.setText('');
@@ -196,6 +375,7 @@
 		videoEnabled = false;
 		videoUnavailableMessage = '';
 		pyPhotoEnabled = false;
+		pdfEnabled = false;
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
@@ -225,15 +405,33 @@
 						musicEnabled = input.musicEnabled ?? false;
 						videoEnabled = input.videoEnabled ?? false;
 						pyPhotoEnabled = input.pyPhotoEnabled ?? false;
+						pdfEnabled = input.pdfEnabled ?? false;
+						normalizeGenerationModes();
 					}
 				} catch (e) {}
 			} else {
 				await setDefaults();
 			}
 
+			const registryEntry = get(featureRegistry)?.[$chatId];
+			if (registryEntry) {
+				const mode = registryEntry.activeGenerationMode;
+				musicEnabled = mode === 'music';
+				videoEnabled = mode === 'video';
+				pyPhotoEnabled = mode === 'photo';
+				if (!musicEnabled) musicUnavailableMessage = '';
+				if (!videoEnabled) videoUnavailableMessage = '';
+				normalizeGenerationModes();
+			}
+
+			suppressGenerationModeRegistrySync = false;
+
 			const chatInput = document.getElementById('chat-input');
 			chatInput?.focus();
+
+			resumePendingMusicRequests($chatId);
 		} else {
+			suppressGenerationModeRegistrySync = false;
 			await goto('/');
 		}
 	};
@@ -614,6 +812,7 @@
 			videoEnabled = false;
 			videoUnavailableMessage = '';
 			pyPhotoEnabled = false;
+			pdfEnabled = false;
 
 			try {
 				const input = JSON.parse(storageChatInput);
@@ -631,6 +830,8 @@
 					musicEnabled = input.musicEnabled ?? false;
 					videoEnabled = input.videoEnabled ?? false;
 					pyPhotoEnabled = input.pyPhotoEnabled ?? false;
+					pdfEnabled = input.pdfEnabled ?? false;
+					normalizeGenerationModes();
 				}
 			} catch (e) {}
 		}
@@ -673,6 +874,9 @@
 
 	onDestroy(() => {
 		try {
+			for (const control of Object.values(musicPolls)) {
+				control.cancelled = true;
+			}
 			pageSubscribe();
 			showControlsSubscribe();
 			selectedFolderSubscribe();
@@ -1734,7 +1938,11 @@
 				return;
 			}
 
+			const userMessage = _history.messages[parentId];
+			const promptText = userMessage?.content ?? '';
+
 			let responseMessageId = uuidv4();
+			const musicRequestId = generationMode === 'music' ? uuidv4() : null;
 			let responseMessage = {
 				parentId: parentId,
 				id: responseMessageId,
@@ -1751,7 +1959,9 @@
 							music: {
 								enabled: true,
 								status: 'generating',
-								error: ''
+								error: '',
+								request_id: musicRequestId,
+								prompt: promptText
 							}
 						}
 					: {
@@ -1783,24 +1993,52 @@
 			_history = JSON.parse(JSON.stringify(history));
 			await saveChatHandler(_chatId, _history);
 
-			const userMessage = _history.messages[parentId];
-			const promptText = userMessage?.content ?? '';
-
+			let shouldSaveAfterGeneration = true;
 			try {
 				if (generationMode === 'music') {
-					const res = await generateMusic(localStorage.token, { prompt: promptText });
-					const latest = history.messages[responseMessageId] ?? responseMessage;
-					history.messages[responseMessageId] = {
-						...latest,
-						done: true,
-						music: {
-							...(latest.music ?? {}),
-							...res,
-							enabled: true,
-							status: 'ready',
-							error: ''
+					const requestId = musicRequestId ?? uuidv4();
+					const res = await generateMusic(localStorage.token, {
+						request_id: requestId,
+						prompt: promptText,
+						...(dev ? { music_length_ms: 30000 } : {}),
+						chat_id: _chatId,
+						message_id: responseMessageId
+					});
+
+					if (res && (res as any).status === 'pending') {
+						shouldSaveAfterGeneration = false;
+						void pollMusicRequestUntilDone(_chatId, responseMessageId, requestId);
+					} else {
+						const latest = history.messages[responseMessageId] ?? responseMessage;
+						history.messages[responseMessageId] = {
+							...latest,
+							done: true,
+							music: {
+								...(latest.music ?? {}),
+								...res,
+								enabled: true,
+								status: 'ready',
+								error: ''
+							}
+						};
+
+						try {
+							addGeneratedFile({
+								id: String((res as any)?.id ?? responseMessageId),
+								type: 'audio',
+								name: `music-${String((res as any)?.id ?? responseMessageId)}.${(res as any)?.ext ?? 'mp3'}`,
+								url: (res as any)?.file_id
+									? `/api/v1/files/${(res as any).file_id}/content`
+									: ((res as any)?.data_url ?? ''),
+								createdAt: Date.now(),
+								mimeType: (res as any)?.media_type,
+								source: 'music',
+								fileId: (res as any)?.file_id ?? undefined
+							});
+						} catch {
+							// ignore
 						}
-					};
+					}
 				} else {
 					const res = await generateVideo(localStorage.token, { prompt: promptText });
 					const latest = history.messages[responseMessageId] ?? responseMessage;
@@ -1845,8 +2083,10 @@
 			history = history;
 			await tick();
 
-			_history = JSON.parse(JSON.stringify(history));
-			await saveChatHandler(_chatId, _history);
+			if (shouldSaveAfterGeneration) {
+				_history = JSON.parse(JSON.stringify(history));
+				await saveChatHandler(_chatId, _history);
+			}
 
 			currentChatPage.set(1);
 			chats.set(await getChatList(localStorage.token, $currentChatPage));
@@ -2683,6 +2923,7 @@
 										downloadVoiceVoice={downloadVoiceVoice}
 										downloadVoiceUnavailableMessage={downloadVoiceUnavailableMessage}
 										pyPhotoEnabled={pyPhotoEnabled}
+										pdfEnabled={pdfEnabled}
 										topPadding={true}
 										bottomPadding={files.length > 0}
 										{onSelect}
@@ -2712,6 +2953,7 @@
 									bind:pyPhotoEnabled
 									bind:videoEnabled
 									bind:videoUnavailableMessage
+									bind:pdfEnabled
 									bind:atSelectedModel
 									bind:showCommands
 									toolServers={$toolServers}
@@ -2772,6 +3014,7 @@
 									bind:pyPhotoEnabled
 									bind:videoEnabled
 									bind:videoUnavailableMessage
+									bind:pdfEnabled
 									bind:atSelectedModel
 									bind:showCommands
 									toolServers={$toolServers}

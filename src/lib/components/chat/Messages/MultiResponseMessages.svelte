@@ -52,6 +52,7 @@
 	export let downloadVoiceUnavailableMessage = '';
 
 	export let pyPhotoEnabled = false;
+	export let pdfEnabled = false;
 
 	export let triggerScroll: Function;
 
@@ -304,6 +305,7 @@
 									{downloadVoiceVoice}
 									{downloadVoiceUnavailableMessage}
 									{pyPhotoEnabled}
+									{pdfEnabled}
 									isLastMessage={true}
 									siblings={groupedMessageIds[selectedModelIdx].messageIds}
 									gotoMessage={(message, messageIdx) => gotoMessage(selectedModelIdx, messageIdx)}
@@ -364,6 +366,7 @@
 										{downloadVoiceVoice}
 										{downloadVoiceUnavailableMessage}
 										{pyPhotoEnabled}
+										{pdfEnabled}
 										isLastMessage={true}
 										siblings={groupedMessageIds[modelIdx].messageIds}
 										gotoMessage={(message, messageIdx) => gotoMessage(modelIdx, messageIdx)}

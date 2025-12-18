@@ -138,10 +138,10 @@ server {
 
 Required for production:
 ```env
-PUBLIC_API_BASE_URL=https://yourdomain.com
-WEBUI_URL=https://yourdomain.com
+PUBLIC_API_BASE_URL=
+WEBUI_URL=https://aia.crypt.ge
 WEBUI_SECRET_KEY=<generate-random-secret>
-CORS_ALLOW_ORIGIN=https://yourdomain.com
+CORS_ALLOW_ORIGIN=https://aia.crypt.ge
 ENV=prod
 ```
 

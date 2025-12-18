@@ -61,12 +61,12 @@ pip install harfbuzz fribidi-py
 # Copy and edit environment file
 cp .env.example .env  # or copy existing .env
 
-# Key settings for production:
-# - Set PUBLIC_API_BASE_URL to your domain
-# - Set WEBUI_URL to your domain
-# - Configure CORS_ALLOW_ORIGIN properly
-# - Set strong WEBUI_SECRET_KEY
-# - Set up Redis if using voice credits
+ # Key settings for production:
+ # - Set WEBUI_URL to https://aia.crypt.ge
+ # - Optionally set PUBLIC_API_BASE_URL (leave empty for same-origin)
+ # - Configure CORS_ALLOW_ORIGIN properly
+ # - Set strong WEBUI_SECRET_KEY
+ # - Set up Redis if using voice credits
 ```
 
 ### 6. Run Backend (uvicorn)

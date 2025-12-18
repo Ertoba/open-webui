@@ -14,6 +14,7 @@
 	import Images from './Settings/Images.svelte';
 	import Music from './Settings/Music.svelte';
 	import Video from './Settings/Video.svelte';
+	import Pdf from './Settings/Pdf.svelte';
 	import Interface from './Settings/Interface.svelte';
 	import Models from './Settings/Models.svelte';
 	import Connections from './Settings/Connections.svelte';
@@ -48,6 +49,7 @@
 			'images',
 			'music',
 			'video',
+			'pdf',
 			'pipelines',
 			'db'
 		].includes(tabFromPath)
@@ -426,6 +428,33 @@
 		</button>
 
 		<button
+			id="pdf"
+			class="px-0.5 py-1 min-w-fit rounded-lg flex-1 md:flex-none flex text-left transition {selectedTab ===
+			'pdf'
+				? ''
+				: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+			on:click={() => {
+				goto('/admin/settings/pdf');
+			}}
+		>
+			<div class=" self-center mr-2">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.8"
+					class="w-4 h-4"
+				>
+					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v3.375A2.25 2.25 0 0 1 17.25 19.875H6.75A2.25 2.25 0 0 1 4.5 17.625V6.375A2.25 2.25 0 0 1 6.75 4.125H12" />
+					<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25H19.5V9" />
+					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 5.25l-7.5 7.5" />
+				</svg>
+			</div>
+			<div class=" self-center">{$i18n.t('PDF Generator')}</div>
+		</button>
+
+		<button
 			id="pipelines"
 			class="px-0.5 py-1 min-w-fit rounded-lg flex-1 md:flex-none flex text-left transition {selectedTab ===
 			'pipelines'
@@ -563,6 +592,12 @@
 			/>
 		{:else if selectedTab === 'video'}
 			<Video
+				saveHandler={() => {
+					toast.success($i18n.t('Settings saved successfully!'));
+				}}
+			/>
+		{:else if selectedTab === 'pdf'}
+			<Pdf
 				saveHandler={() => {
 					toast.success($i18n.t('Settings saved successfully!'));
 				}}

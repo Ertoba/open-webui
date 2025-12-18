@@ -25,6 +25,7 @@ ARG GID=0
 ######## WebUI frontend ########
 FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
 ARG BUILD_HASH
+ARG PUBLIC_API_BASE_URL
 
 # Set Node.js options to prevent heap out-of-memory during build
 ENV NODE_OPTIONS="--max-old-space-size=4096"
@@ -39,6 +40,7 @@ RUN npm ci --force
 
 COPY . .
 ENV APP_BUILD_HASH=${BUILD_HASH}
+ENV PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL}
 RUN npm run build
 
 ######## WebUI backend ########

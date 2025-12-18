@@ -544,6 +544,8 @@ def get_image_data(data: str, headers=None):
 
 
 def upload_image(request, image_data, content_type, metadata, user):
+    if isinstance(metadata, dict):
+        metadata = {**metadata, "generated": True, "source": "image"}
     image_format = mimetypes.guess_extension(content_type)
     file = UploadFile(
         file=io.BytesIO(image_data),
