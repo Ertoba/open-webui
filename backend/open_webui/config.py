@@ -3828,25 +3828,25 @@ def _credits_env_int(env_name: str, default: int) -> int:
 AUDIO_CREDITS_FREE_ANON = PersistentConfig(
     "AUDIO_CREDITS_FREE_ANON",
     "credits.audio.free_anon",
-    _credits_env_int("AUDIO_CREDITS_FREE_ANON", 100),
+    _credits_env_int("AUDIO_CREDITS_FREE_ANON", 1000),
 )
 
 AUDIO_CREDITS_FREE_AUTH = PersistentConfig(
     "AUDIO_CREDITS_FREE_AUTH",
     "credits.audio.free_auth",
-    _credits_env_int("AUDIO_CREDITS_FREE_AUTH", 500),
+    _credits_env_int("AUDIO_CREDITS_FREE_AUTH", 3000),
 )
 
 PHOTO_CREDITS_FREE_ANON = PersistentConfig(
     "PHOTO_CREDITS_FREE_ANON",
     "credits.photo.free_anon",
-    _credits_env_int("PHOTO_CREDITS_FREE_ANON", 3),
+    _credits_env_int("PHOTO_CREDITS_FREE_ANON", 2000),
 )
 
 PHOTO_CREDITS_FREE_AUTH = PersistentConfig(
     "PHOTO_CREDITS_FREE_AUTH",
     "credits.photo.free_auth",
-    _credits_env_int("PHOTO_CREDITS_FREE_AUTH", 5),
+    _credits_env_int("PHOTO_CREDITS_FREE_AUTH", 6000),
 )
 
 PHOTO_CREDITS_COST = PersistentConfig(
@@ -3858,13 +3858,13 @@ PHOTO_CREDITS_COST = PersistentConfig(
 VIDEO_CREDITS_FREE_ANON = PersistentConfig(
     "VIDEO_CREDITS_FREE_ANON",
     "credits.video.free_anon",
-    _credits_env_int("VIDEO_CREDITS_FREE_ANON", 1),
+    _credits_env_int("VIDEO_CREDITS_FREE_ANON", 1000),
 )
 
 VIDEO_CREDITS_FREE_AUTH = PersistentConfig(
     "VIDEO_CREDITS_FREE_AUTH",
     "credits.video.free_auth",
-    _credits_env_int("VIDEO_CREDITS_FREE_AUTH", 3),
+    _credits_env_int("VIDEO_CREDITS_FREE_AUTH", 3000),
 )
 
 VIDEO_CREDITS_COST = PersistentConfig(

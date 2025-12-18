@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from urllib.parse import urlparse
 
@@ -207,6 +208,58 @@ def get_redis_connection(
 
     _CONNECTION_CACHE[cache_key] = connection
     return connection
+
+
+async def ensure_async_redis(app, *, max_attempts: int = 1, delay_seconds: float = 0.0):
+    """
+    Best-effort Redis availability:
+    - If a Redis URL is configured but Redis isn't ready at startup (common in Docker),
+      try to (re)connect and `PING` it.
+    - Returns the live async Redis connection or None.
+    """
+    try:
+        existing = getattr(getattr(app, "state", None), "redis", None)
+    except Exception:
+        existing = None
+
+    if existing is not None:
+        try:
+            await existing.ping()
+            return existing
+        except Exception:
+            try:
+                app.state.redis = None
+            except Exception:
+                pass
+
+    if not REDIS_URL:
+        return None
+
+    conn = get_redis_connection(
+        redis_url=REDIS_URL,
+        redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
+        redis_cluster=REDIS_CLUSTER,
+        async_mode=True,
+    )
+    if conn is None:
+        return None
+
+    attempts = max(1, int(max_attempts or 1))
+    delay = float(delay_seconds or 0.0)
+    for attempt in range(attempts):
+        try:
+            await conn.ping()
+            try:
+                app.state.redis = conn
+            except Exception:
+                pass
+            return conn
+        except Exception:
+            if attempt < attempts - 1 and delay > 0:
+                await asyncio.sleep(delay)
+            continue
+
+    return None
 
 
 def get_sentinels_from_env(sentinel_hosts_env, sentinel_port_env):

@@ -22,6 +22,7 @@ from open_webui.env import ENABLE_FORWARD_USER_INFO_HEADERS, SRC_LOG_LEVELS
 from open_webui.routers.files import upload_file_handler, get_file_content_by_id
 from open_webui.utils.auth import get_admin_user, get_verified_user, get_verified_user_or_none
 from open_webui.utils.domain_credits import commit_generation, preflight_generation
+from open_webui.utils.redis import ensure_async_redis
 from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.images.comfyui import (
     ComfyUICreateImageForm,
@@ -574,6 +575,8 @@ async def image_generations(
 ):
     is_admin = getattr(user, "role", None) == "admin"
     redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
 
     anon_id: str | None = None
     subject_id = None

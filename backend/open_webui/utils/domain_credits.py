@@ -167,8 +167,8 @@ async def charge_generation(
 ) -> tuple[DomainCreditsStatus, bool]:
     """
     Charges one generation:
-    - uses free quota first (increments free_used by 1)
-    - otherwise deducts paid credits
+    - uses free quota first (increments free_used by `cost_credits`)
+    - otherwise deducts paid credits by `cost_credits`
 
     Returns: (status_after, charged_paid)
     """
@@ -177,9 +177,17 @@ async def charge_generation(
         redis, domain=domain, subject_id=subject_id, free_limit=free_limit
     )
 
-    if status_before.free_used < int(free_limit or 0):
+    cost_credits = int(cost_credits or 0)
+    if cost_credits <= 0:
+        return status_before, False
+
+    if status_before.free_remaining >= cost_credits:
         await increment_free_used(
-            redis, domain=domain, subject_id=subject_id, amount=1, now_ts=now_ts
+            redis,
+            domain=domain,
+            subject_id=subject_id,
+            amount=cost_credits,
+            now_ts=now_ts,
         )
         status_after = await get_domain_status(
             redis, domain=domain, subject_id=subject_id, free_limit=free_limit
@@ -188,10 +196,6 @@ async def charge_generation(
 
     if require_auth_after_free and not is_authenticated:
         raise PermissionError("AUTH_REQUIRED")
-
-    cost_credits = int(cost_credits or 0)
-    if cost_credits <= 0:
-        return status_before, False
 
     if status_before.paid_balance < cost_credits:
         raise ValueError("INSUFFICIENT_CREDITS")
@@ -219,15 +223,15 @@ async def preflight_generation(
         redis, domain=domain, subject_id=subject_id, free_limit=free_limit
     )
 
-    if status_before.free_used < int(free_limit or 0):
+    cost_credits = int(cost_credits or 0)
+    if cost_credits <= 0:
+        return DomainGenerationPreflight(mode="free", status=status_before)
+
+    if status_before.free_remaining >= cost_credits:
         return DomainGenerationPreflight(mode="free", status=status_before)
 
     if require_auth_after_free and not is_authenticated:
         raise PermissionError("AUTH_REQUIRED")
-
-    cost_credits = int(cost_credits or 0)
-    if cost_credits <= 0:
-        return DomainGenerationPreflight(mode="free", status=status_before)
 
     if status_before.paid_balance < cost_credits:
         raise ValueError("INSUFFICIENT_CREDITS")
@@ -248,9 +252,15 @@ async def commit_generation(
     now_ts = int(now_ts or int(time.time()))
 
     if mode == "free":
-        await increment_free_used(
-            redis, domain=domain, subject_id=subject_id, amount=1, now_ts=now_ts
-        )
+        cost_credits = int(cost_credits or 0)
+        if cost_credits > 0:
+            await increment_free_used(
+                redis,
+                domain=domain,
+                subject_id=subject_id,
+                amount=cost_credits,
+                now_ts=now_ts,
+            )
         status_after = await get_domain_status(
             redis, domain=domain, subject_id=subject_id, free_limit=free_limit
         )

@@ -67,6 +67,7 @@ from open_webui.env import (
 from open_webui.models.users import Users
 from open_webui.models.stt_credit_ledger import record_stt_credits_charge, record_tts_credits_charge
 from open_webui.utils.auth import decode_token
+from open_webui.utils.redis import ensure_async_redis
 from open_webui.utils.stt_credits import (
     AUTH_REQUIRED_MESSAGE_KA,
     LIMIT_EXHAUSTED_MESSAGE_KA,
@@ -672,6 +673,8 @@ async def speech(request: Request, user=Depends(get_verified_user)):
     is_admin = getattr(user, "role", None) == "admin"
     credits_needed = count_credits(str(payload.get("input", "")))
     redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
     now_ts = None
     status_before = None
     free_limit = None
@@ -783,7 +786,10 @@ async def voice_status(
     is_admin = getattr(user, "role", None) == "admin"
     tts_engine = str(request.app.state.config.TTS_ENGINE or "")
     tts_configured = bool(tts_engine)
-    redis_available = request.app.state.redis is not None
+    redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
+    redis_available = redis is not None
     credits_required = not is_admin
     available = bool(tts_configured and (not credits_required or redis_available))
 
@@ -824,6 +830,8 @@ async def generate_voice(
 
     credits_needed = count_credits(input_text)
     redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
     subject_id: str | None = None
     now_ts: int | None = None
     status_before = None
@@ -1615,6 +1623,8 @@ async def transcription(
             is_admin = getattr(user, "role", None) == "admin"
             if not is_admin:
                 redis = request.app.state.redis
+                if redis is None:
+                    redis = await ensure_async_redis(request.app, max_attempts=1)
                 if redis is None:
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

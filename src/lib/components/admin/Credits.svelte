@@ -471,7 +471,7 @@
 				</div>
 			{:else if details}
 				<div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
-					{#each ['audio', 'photo', 'video', 'music'] as domain (domain)}
+					{#each ['audio', 'photo', 'video'] as domain (domain)}
 						{@const d = details?.domains?.[domain]}
 						<div class="p-3 rounded-xl border border-gray-100 dark:border-gray-850/60">
 							<div class="text-xs text-gray-500 dark:text-gray-400">{domain}</div>

@@ -27,7 +27,7 @@
 
 	let activeDomain: CreditsDomain = 'audio';
 
-	const DOMAIN_ORDER: CreditsDomain[] = ['audio', 'photo', 'video', 'music'];
+	const DOMAIN_ORDER: CreditsDomain[] = ['audio', 'photo', 'video'];
 	const DOMAIN_LABELS: Record<CreditsDomain, string> = {
 		audio: 'აუდიო კრედიტები',
 		video: 'ვიდეო კრედიტები',
@@ -106,8 +106,9 @@
 		<div class="flex justify-between items-start">
 			<div class="text-xl font-medium">კრედიტები</div>
 			<button
+				type="button"
 				class="self-center"
-				on:click={() => {
+				on:click|preventDefault|stopPropagation={() => {
 					show = false;
 				}}
 				aria-label={$i18n.t('Close')}

@@ -8,6 +8,14 @@ services:
     restart: unless-stopped
     image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis:/data
+
   open-webui:
     build:
       context: .
@@ -21,10 +29,12 @@ services:
       - open-webui:/app/backend/data
     depends_on:
       - ollama
+      - redis
     ports:
       - ${OPEN_WEBUI_PORT-3000}:8080
     environment:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL-http://ollama:11434}
+      - REDIS_URL=${REDIS_URL-redis://redis:6379/0}
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY-}
       - WEBUI_URL=${WEBUI_URL-}
       - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN-}
@@ -37,3 +47,4 @@ services:
 volumes:
   ollama: {}
   open-webui: {}
+  redis: {}

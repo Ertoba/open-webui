@@ -17,6 +17,7 @@ from open_webui.config import CACHE_DIR
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT, SRC_LOG_LEVELS
 from open_webui.utils.auth import get_admin_user, get_verified_user_or_none
 from open_webui.utils.domain_credits import commit_generation, preflight_generation
+from open_webui.utils.redis import ensure_async_redis
 from open_webui.routers.files import upload_file_handler
 
 log = logging.getLogger(__name__)
@@ -154,7 +155,10 @@ async def video_status(
     configured = bool(base_url)
 
     is_admin = getattr(user, "role", None) == "admin"
-    redis_available = request.app.state.redis is not None
+    redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
+    redis_available = redis is not None
     credits_required = not is_admin
 
     available = bool(enabled and configured and (not credits_required or redis_available))
@@ -313,6 +317,8 @@ async def generate_video(
 
     is_admin = getattr(user, "role", None) == "admin"
     redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
 
     subject_id = None
     free_limit = None

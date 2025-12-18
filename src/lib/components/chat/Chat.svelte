@@ -252,7 +252,9 @@
 				id: String(result?.id ?? responseMessageId),
 				type: 'audio',
 				name: `music-${String(result?.id ?? responseMessageId)}.${result?.ext ?? 'mp3'}`,
-				url: result?.file_id ? `/api/v1/files/${result.file_id}/content` : (result?.data_url ?? ''),
+				url: result?.file_id
+					? `/api/v1/files/${result.file_id}/content`
+					: (result?.data_url ?? result?.play_url ?? ''),
 				createdAt: Date.now(),
 				mimeType: result?.media_type,
 				source: 'music',
@@ -2029,7 +2031,7 @@
 								name: `music-${String((res as any)?.id ?? responseMessageId)}.${(res as any)?.ext ?? 'mp3'}`,
 								url: (res as any)?.file_id
 									? `/api/v1/files/${(res as any).file_id}/content`
-									: ((res as any)?.data_url ?? ''),
+									: ((res as any)?.data_url ?? (res as any)?.play_url ?? ''),
 								createdAt: Date.now(),
 								mimeType: (res as any)?.media_type,
 								source: 'music',

@@ -448,8 +448,22 @@
 
 	const compactTitle = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 
-	$: musicSrc = message?.music?.data_url ?? musicFileBlobUrl;
-	$: musicDownloadHref = message?.music?.data_url ?? '';
+	$: {
+		const dataUrl = (message?.music?.data_url ?? '').trim();
+		const fileId = (message?.music?.file_id ?? '').trim();
+
+		musicSrc = dataUrl
+			? dataUrl
+			: fileId
+				? musicFileBlobUrl
+				: normalizeMediaUrl(message?.music?.play_url);
+
+		musicDownloadHref = dataUrl
+			? dataUrl
+			: fileId
+				? ''
+				: normalizeMediaUrl(message?.music?.download_url);
+	}
 
 	$: if (typeof window !== 'undefined') {
 		const fileId = (message?.music?.file_id ?? '').trim();
@@ -2119,7 +2133,7 @@
 								{#if message.music?.status === 'ready' && musicSrc}
 									<div
 										bind:this={musicVisualizerEl}
-										class="h-9 w-full rounded-lg bg-gray-50 dark:bg-gray-800/40 overflow-hidden text-gray-500 dark:text-gray-400"
+										class="h-14 w-full rounded-lg bg-gray-50 dark:bg-gray-800/40 overflow-hidden text-gray-500 dark:text-gray-400"
 									>
 										<canvas bind:this={musicCanvasEl} class="w-full h-full" aria-hidden="true"
 										></canvas>
@@ -2141,17 +2155,25 @@
 								<div class="flex items-center justify-between gap-2">
 									<div class="text-xs text-gray-500 dark:text-gray-400">
 										{#if message.music?.status === 'generating'}
-											{$i18n.t('Generating music...')}
+											<div
+												class="inline-flex items-center"
+												aria-label={$i18n.t('Generating music')}
+											>
+												<div class="flex items-end gap-0.5 h-3">
+													<span class="w-0.5 h-2 bg-current opacity-60 animate-pulse" style="animation-delay:0ms"></span>
+													<span class="w-0.5 h-3 bg-current opacity-40 animate-pulse" style="animation-delay:120ms"></span>
+													<span class="w-0.5 h-2 bg-current opacity-60 animate-pulse" style="animation-delay:240ms"></span>
+													<span class="w-0.5 h-3 bg-current opacity-40 animate-pulse" style="animation-delay:360ms"></span>
+												</div>
+											</div>
 										{:else if message.music?.status === 'ready' && !musicSrc && musicFileLoading}
 											{$i18n.t('Loading...')}
-										{:else if message.music?.status === 'ready'}
-											{$i18n.t('Ready')}
 										{:else if message.music?.status === 'error'}
 											{$i18n.t('Error')}
 										{/if}
 									</div>
 
-									{#if message.music?.status === 'ready' && (message.music?.data_url || message.music?.file_id)}
+									{#if message.music?.status === 'ready' && (message.music?.data_url || message.music?.file_id || musicDownloadHref)}
 										{#if message.music?.data_url}
 											<a
 												href={musicDownloadHref}
@@ -2161,7 +2183,7 @@
 											>
 												<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
 											</a>
-										{:else}
+										{:else if message.music?.file_id}
 											<button
 												type="button"
 												class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition text-sm disabled:opacity-60 disabled:pointer-events-none"
@@ -2171,6 +2193,15 @@
 											>
 												<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
 											</button>
+										{:else}
+											<a
+												href={musicDownloadHref}
+												class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition text-sm"
+												aria-label={$i18n.t('Download')}
+												download={`music-${message.id}.${message.music.ext ?? 'mp3'}`}
+											>
+												<Download className="w-4 h-4" strokeWidth="2" />{$i18n.t('Download')}
+											</a>
 										{/if}
 									{/if}
 								</div>

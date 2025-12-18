@@ -94,7 +94,7 @@
 			<div class="flex flex-col">
 				<div class="font-medium">{$i18n.t('Enable ElevenLabs Music')}</div>
 				<div class="text-xs text-gray-500 dark:text-gray-400">
-					{$i18n.t('Allow users to generate music from chat prompts (no credits)')}
+					{$i18n.t('Allow users to generate music from chat prompts (uses shared audio credits)')}
 				</div>
 			</div>
 

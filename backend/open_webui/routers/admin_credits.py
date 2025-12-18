@@ -126,11 +126,9 @@ async def _peek_user_domains(
     )
     photo_free_limit = int(getattr(request.app.state.config, "PHOTO_CREDITS_FREE_AUTH", 0) or 0)
     video_free_limit = int(getattr(request.app.state.config, "VIDEO_CREDITS_FREE_AUTH", 0) or 0)
-    music_free_limit = int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_AUTH", 0) or 0)
 
     photo_cost = int(getattr(request.app.state.config, "PHOTO_CREDITS_COST", 0) or 0)
     video_cost = int(getattr(request.app.state.config, "VIDEO_CREDITS_COST", 0) or 0)
-    music_cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
 
     audio_status = await get_credits_status(
         redis, user_id=user_id, now_ts=now_ts, free_limit=audio_free_limit
@@ -142,13 +140,6 @@ async def _peek_user_domains(
     video_status = await get_domain_status(
         redis, domain="video", subject_id=user_id, free_limit=video_free_limit
     )
-    music_status = await get_domain_status(
-        redis, domain="music", subject_id=user_id, free_limit=music_free_limit
-    )
-
-    photo_paid_remaining = int(photo_status.paid_balance) // photo_cost if photo_cost > 0 else int(photo_status.paid_balance)
-    video_paid_remaining = int(video_status.paid_balance) // video_cost if video_cost > 0 else int(video_status.paid_balance)
-    music_paid_remaining = int(music_status.paid_balance) // music_cost if music_cost > 0 else int(music_status.paid_balance)
 
     return {
         "audio": AdminDomainCredits(
@@ -162,34 +153,24 @@ async def _peek_user_domains(
             total_remaining=int(audio_status.total_remaining),
         ),
         "photo": AdminDomainCredits(
-            unit="generations",
+            unit="credits",
             cost=photo_cost if photo_cost > 0 else None,
             free_used=int(photo_status.free_used),
             free_limit=int(photo_status.free_limit),
             free_remaining=int(photo_status.free_remaining),
             paid_balance=int(photo_status.paid_balance),
-            paid_remaining=int(photo_paid_remaining),
-            total_remaining=int(photo_status.free_remaining) + int(photo_paid_remaining),
+            paid_remaining=int(photo_status.paid_balance),
+            total_remaining=int(photo_status.free_remaining) + int(photo_status.paid_balance),
         ),
         "video": AdminDomainCredits(
-            unit="generations",
+            unit="credits",
             cost=video_cost if video_cost > 0 else None,
             free_used=int(video_status.free_used),
             free_limit=int(video_status.free_limit),
             free_remaining=int(video_status.free_remaining),
             paid_balance=int(video_status.paid_balance),
-            paid_remaining=int(video_paid_remaining),
-            total_remaining=int(video_status.free_remaining) + int(video_paid_remaining),
-        ),
-        "music": AdminDomainCredits(
-            unit="generations",
-            cost=music_cost if music_cost > 0 else None,
-            free_used=int(music_status.free_used),
-            free_limit=int(music_status.free_limit),
-            free_remaining=int(music_status.free_remaining),
-            paid_balance=int(music_status.paid_balance),
-            paid_remaining=int(music_paid_remaining),
-            total_remaining=int(music_status.free_remaining) + int(music_paid_remaining),
+            paid_remaining=int(video_status.paid_balance),
+            total_remaining=int(video_status.free_remaining) + int(video_status.paid_balance),
         ),
     }
 
@@ -355,16 +336,12 @@ async def get_admin_credits_stats(request: Request, user=Depends(get_admin_user_
     domains: dict[str, AdminCreditsDomainStats] = {
         "audio": AdminCreditsDomainStats(unit="credits", cost=1),
         "photo": AdminCreditsDomainStats(
-            unit="generations",
+            unit="credits",
             cost=int(getattr(request.app.state.config, "PHOTO_CREDITS_COST", 0) or 0) or None,
         ),
         "video": AdminCreditsDomainStats(
-            unit="generations",
+            unit="credits",
             cost=int(getattr(request.app.state.config, "VIDEO_CREDITS_COST", 0) or 0) or None,
-        ),
-        "music": AdminCreditsDomainStats(
-            unit="generations",
-            cost=int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0) or None,
         ),
     }
 
@@ -385,9 +362,9 @@ async def get_admin_credits_stats(request: Request, user=Depends(get_admin_user_
             for chunk in _chunk(user_ids, 50):
                 results.extend(await asyncio.gather(*[peek(uid) for uid in chunk]))
 
-            totals_free: dict[str, int] = {"audio": 0, "photo": 0, "video": 0, "music": 0}
-            totals_paid: dict[str, int] = {"audio": 0, "photo": 0, "video": 0, "music": 0}
-            totals_remaining: dict[str, int] = {"audio": 0, "photo": 0, "video": 0, "music": 0}
+            totals_free: dict[str, int] = {"audio": 0, "photo": 0, "video": 0}
+            totals_paid: dict[str, int] = {"audio": 0, "photo": 0, "video": 0}
+            totals_remaining: dict[str, int] = {"audio": 0, "photo": 0, "video": 0}
 
             for _uid, dmap in results:
                 for domain, d in dmap.items():

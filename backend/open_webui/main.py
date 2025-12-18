@@ -555,7 +555,7 @@ from open_webui.utils.oauth import (
     OAuthClientInformationFull,
 )
 from open_webui.utils.security_headers import SecurityHeadersMiddleware
-from open_webui.utils.redis import get_redis_connection
+from open_webui.utils.redis import ensure_async_redis
 
 from open_webui.tasks import (
     redis_task_command_listener,
@@ -638,21 +638,9 @@ async def lifespan(app: FastAPI):
     log.info("Installing external dependencies of functions and tools...")
     install_tool_and_function_dependencies()
 
-    app.state.redis = get_redis_connection(
-        redis_url=REDIS_URL,
-        redis_sentinels=get_sentinels_from_env(
-            REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT
-        ),
-        redis_cluster=REDIS_CLUSTER,
-        async_mode=True,
-    )
-
-    if app.state.redis is not None:
-        try:
-            await app.state.redis.ping()
-        except Exception as e:
-            log.warning("Redis configured but unavailable: %s", e)
-            app.state.redis = None
+    # Redis is optional. When configured in Docker, Redis may start after the app;
+    # retry briefly so credits/tasks can initialize reliably.
+    app.state.redis = await ensure_async_redis(app, max_attempts=10, delay_seconds=0.5)
 
     if app.state.redis is not None:
         app.state.redis_task_command_listener = asyncio.create_task(

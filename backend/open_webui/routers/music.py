@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import mimetypes
@@ -22,7 +23,8 @@ from open_webui.env import (
 from open_webui.models.files import FileForm, Files
 from open_webui.storage.provider import Storage
 from open_webui.utils.auth import get_admin_user, get_verified_user_or_none
-from open_webui.utils.domain_credits import commit_generation, preflight_generation
+from open_webui.utils.redis import ensure_async_redis
+from open_webui.utils.stt_credits import charge_committed_transcript, get_credits_status
 
 log = logging.getLogger(__name__)
 log.setLevel(SRC_LOG_LEVELS.get("ROUTERS", logging.INFO))
@@ -268,7 +270,10 @@ async def music_status(
     configured = bool(_api_key(request))
 
     is_admin = getattr(user, "role", None) == "admin"
-    redis_available = getattr(request.app.state, "redis", None) is not None
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
+    redis_available = redis is not None
     credits_required = not is_admin
 
     available = bool(enabled and configured and (not credits_required or redis_available))
@@ -304,11 +309,23 @@ async def get_music_meta(audio_id: str):
     if not meta:
         raise HTTPException(status_code=404, detail="Not found")
 
+    file_id = str(meta.get("file_id") or "").strip()
+    play_url = (
+        f"/api/v1/files/{file_id}/content"
+        if file_id
+        else f"/api/v1/music/{audio_id}"
+    )
+    download_url = (
+        f"/api/v1/files/{file_id}/content?attachment=true"
+        if file_id
+        else f"/api/v1/music/{audio_id}/download"
+    )
+
     return {
         **meta,
         "id": audio_id,
-        "play_url": f"/api/v1/music/{audio_id}",
-        "download_url": f"/api/v1/music/{audio_id}/download",
+        "play_url": play_url,
+        "download_url": download_url,
     }
 def _music_request_cache_key(request_id: str) -> str:
     return f"{REDIS_KEY_PREFIX}:music:request:{request_id}"
@@ -508,8 +525,8 @@ async def _run_generation_and_cache(
     form_data: MusicStreamForm,
     credits_subject_id: str | None = None,
     credits_free_limit: int | None = None,
-    credits_mode: str | None = None,
-    credits_cost: int = 0,
+    credits_signature: str | None = None,
+    credits_needed: int = 0,
 ) -> None:
     try:
         audio_id = uuid.uuid4().hex
@@ -522,22 +539,22 @@ async def _run_generation_and_cache(
 
         charged_paid = False
         redis = getattr(request.app.state, "redis", None)
-        if (
-            redis is not None
-            and credits_subject_id
-            and credits_mode
-            and credits_free_limit is not None
-        ):
+        if redis is not None and credits_subject_id and credits_free_limit is not None:
             try:
-                _status_after, charged_paid = await commit_generation(
-                    redis,
-                    domain="music",
-                    subject_id=credits_subject_id,
-                    free_limit=int(credits_free_limit or 0),
-                    mode=str(credits_mode),
-                    cost_credits=int(credits_cost or 0),
-                    now_ts=int(time.time()),
-                )
+                credits_needed = int(credits_needed or 0)
+                if credits_needed > 0:
+                    signature = (credits_signature or "").strip()
+                    if not signature:
+                        signature_source = f"music:{request_id}:{credits_subject_id}:{credits_needed}"
+                        signature = hashlib.sha256(signature_source.encode("utf-8")).hexdigest()
+                    _status_after, charged_paid, _exhausted_after = await charge_committed_transcript(
+                        redis,
+                        user_id=credits_subject_id,
+                        credits_needed=credits_needed,
+                        signature=signature,
+                        now_ts=int(time.time()),
+                        free_limit=int(credits_free_limit or 0),
+                    )
             except Exception:
                 log.exception("Failed to commit music credits charge")
 
@@ -588,8 +605,12 @@ async def _run_generation_and_cache(
             "id": audio_id,
             "ext": ext,
             "media_type": media_type,
-            "play_url": f"/api/v1/music/{audio_id}",
-            "download_url": f"/api/v1/music/{audio_id}/download",
+            "play_url": f"/api/v1/files/{file_id}/content" if file_id else f"/api/v1/music/{audio_id}",
+            "download_url": (
+                f"/api/v1/files/{file_id}/content?attachment=true"
+                if file_id
+                else f"/api/v1/music/{audio_id}/download"
+            ),
             "file_id": file_id,
             "charged": bool(charged_paid),
         }
@@ -636,11 +657,13 @@ async def generate_music(
 
     is_admin = getattr(user, "role", None) == "admin"
     redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
 
     credits_subject_id: str | None = None
     credits_free_limit: int | None = None
-    credits_cost: int | None = None
-    credits_mode: str | None = None
+    credits_signature: str | None = None
+    credits_needed: int | None = None
 
     if not is_admin:
         if redis is None:
@@ -655,32 +678,42 @@ async def generate_music(
             else f"anon:{_get_or_set_anon_id(request, response)}"
         )
         credits_free_limit = (
-            int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_AUTH", 0) or 0)
+            int(getattr(request.app.state.config, "AUDIO_CREDITS_FREE_AUTH", 0) or 0)
             if user is not None
-            else int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_ANON", 0) or 0)
+            else int(getattr(request.app.state.config, "AUDIO_CREDITS_FREE_ANON", 0) or 0)
         )
-        credits_cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
+        credits_needed = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
 
         try:
-            preflight = await preflight_generation(
-                redis,
-                domain="music",
-                subject_id=credits_subject_id,
-                free_limit=credits_free_limit,
-                cost_credits=credits_cost,
-                require_auth_after_free=True,
-                is_authenticated=user is not None,
-            )
-            credits_mode = preflight.mode
-        except PermissionError:
+            now_ts = int(time.time())
+            credits_needed = max(0, int(credits_needed or 0))
+
+            if credits_needed > 0:
+                status_before = await get_credits_status(
+                    redis,
+                    user_id=credits_subject_id,
+                    now_ts=now_ts,
+                    free_limit=int(credits_free_limit or 0),
+                )
+
+                if user is None and status_before.free_remaining < credits_needed:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Please sign in to continue music generation",
+                    )
+
+                if user is not None and status_before.total_remaining < credits_needed:
+                    raise HTTPException(
+                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                        detail="Insufficient credits for music generation",
+                    )
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("Music credits preflight failed request_id=%s", request_id)
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Please sign in to continue music generation",
-            )
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Insufficient credits for music generation",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Music generation temporarily unavailable",
             )
 
     prompt = (form_data.prompt or "").strip()
@@ -712,6 +745,10 @@ async def generate_music(
     if not created:
         return {"status": "pending"}
 
+    if not is_admin and credits_subject_id:
+        signature_source = f"music:{request_id}:{credits_subject_id}:{int(credits_needed or 0)}"
+        credits_signature = hashlib.sha256(signature_source.encode("utf-8")).hexdigest()
+
     asyncio.create_task(
         _run_generation_and_cache(
             request,
@@ -727,8 +764,8 @@ async def generate_music(
             form_data=form_data,
             credits_subject_id=credits_subject_id,
             credits_free_limit=credits_free_limit,
-            credits_mode=credits_mode,
-            credits_cost=int(credits_cost or 0),
+            credits_signature=credits_signature,
+            credits_needed=int(credits_needed or 0),
         )
     )
     return {"status": "pending"}

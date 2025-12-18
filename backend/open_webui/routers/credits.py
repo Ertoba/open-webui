@@ -11,6 +11,7 @@ from open_webui.env import SRC_LOG_LEVELS
 from open_webui.models.users import UserModel
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.domain_credits import get_domain_status
+from open_webui.utils.redis import ensure_async_redis
 from open_webui.utils.stt_credits import DEFAULT_FREE_CREDITS_LIMIT, get_credits_status
 
 log = logging.getLogger(__name__)
@@ -124,15 +125,12 @@ def _packages_public_from_config(raw: Any) -> list[CreditsPackage]:
 
 @router.get("/status", response_model=CreditsStatusResponse)
 async def credits_status(request: Request, user: UserModel = Depends(get_verified_user)):
-    redis_available = request.app.state.redis is not None
-    is_admin = getattr(user, "role", None) == "admin"
+    redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
 
-    # Admin bypass: never block.
-    if not redis_available and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Credits system is not available.",
-        )
+    redis_available = redis is not None
+    is_admin = getattr(user, "role", None) == "admin"
 
     enforced = not is_admin
 
@@ -143,9 +141,6 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
     video_packages = _packages_public_from_config(
         getattr(request.app.state.config, "VIDEO_CREDITS_PACKAGES", []) or []
     )
-    music_packages = _packages_public_from_config(
-        getattr(request.app.state.config, "MUSIC_CREDITS_PACKAGES", []) or []
-    )
 
     if is_admin:
         unlimited = 2_147_483_647
@@ -155,11 +150,9 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
         )
         photo_free_limit = int(getattr(request.app.state.config, "PHOTO_CREDITS_FREE_AUTH", 0) or 0)
         video_free_limit = int(getattr(request.app.state.config, "VIDEO_CREDITS_FREE_AUTH", 0) or 0)
-        music_free_limit = int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_AUTH", 0) or 0)
 
         photo_cost = int(getattr(request.app.state.config, "PHOTO_CREDITS_COST", 0) or 0)
         video_cost = int(getattr(request.app.state.config, "VIDEO_CREDITS_COST", 0) or 0)
-        music_cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
 
         return CreditsStatusResponse(
             redis_available=redis_available,
@@ -178,7 +171,7 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
                 ),
                 "photo": DomainCreditsStatusResponse(
                     enforced=False,
-                    unit="generations",
+                    unit="credits",
                     cost=photo_cost if photo_cost > 0 else None,
                     free_used=0,
                     free_limit=photo_free_limit,
@@ -190,7 +183,7 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
                 ),
                 "video": DomainCreditsStatusResponse(
                     enforced=False,
-                    unit="generations",
+                    unit="credits",
                     cost=video_cost if video_cost > 0 else None,
                     free_used=0,
                     free_limit=video_free_limit,
@@ -200,17 +193,60 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
                     total_remaining=unlimited,
                     packages=video_packages,
                 ),
-                "music": DomainCreditsStatusResponse(
+            },
+        )
+
+    # When Redis is unavailable, return a non-blocking response so the UI can render
+    # the credits panel and show a meaningful "unavailable" message.
+    if not redis_available:
+        audio_free_limit = int(
+            getattr(request.app.state.config, "AUDIO_CREDITS_FREE_AUTH", DEFAULT_FREE_CREDITS_LIMIT)
+            or DEFAULT_FREE_CREDITS_LIMIT
+        )
+        photo_free_limit = int(getattr(request.app.state.config, "PHOTO_CREDITS_FREE_AUTH", 0) or 0)
+        video_free_limit = int(getattr(request.app.state.config, "VIDEO_CREDITS_FREE_AUTH", 0) or 0)
+
+        photo_cost = int(getattr(request.app.state.config, "PHOTO_CREDITS_COST", 0) or 0)
+        video_cost = int(getattr(request.app.state.config, "VIDEO_CREDITS_COST", 0) or 0)
+
+        return CreditsStatusResponse(
+            redis_available=False,
+            domains={
+                "audio": DomainCreditsStatusResponse(
                     enforced=False,
-                    unit="generations",
-                    cost=music_cost if music_cost > 0 else None,
+                    unit="credits",
+                    cost=1,
                     free_used=0,
-                    free_limit=music_free_limit,
-                    free_remaining=music_free_limit,
-                    paid_balance=unlimited,
-                    paid_remaining=unlimited,
-                    total_remaining=unlimited,
-                    packages=music_packages,
+                    free_limit=audio_free_limit,
+                    free_remaining=0,
+                    paid_balance=0,
+                    paid_remaining=0,
+                    total_remaining=0,
+                    packages=audio_packages,
+                ),
+                "photo": DomainCreditsStatusResponse(
+                    enforced=False,
+                    unit="credits",
+                    cost=photo_cost if photo_cost > 0 else None,
+                    free_used=0,
+                    free_limit=photo_free_limit,
+                    free_remaining=0,
+                    paid_balance=0,
+                    paid_remaining=0,
+                    total_remaining=0,
+                    packages=photo_packages,
+                ),
+                "video": DomainCreditsStatusResponse(
+                    enforced=False,
+                    unit="credits",
+                    cost=video_cost if video_cost > 0 else None,
+                    free_used=0,
+                    free_limit=video_free_limit,
+                    free_remaining=0,
+                    paid_balance=0,
+                    paid_remaining=0,
+                    total_remaining=0,
+                    packages=video_packages,
                 ),
             },
         )
@@ -219,37 +255,21 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
 
     audio_free_limit = int(getattr(request.app.state.config, "AUDIO_CREDITS_FREE_AUTH", DEFAULT_FREE_CREDITS_LIMIT) or DEFAULT_FREE_CREDITS_LIMIT)
     audio_status = await get_credits_status(
-        request.app.state.redis, user_id=user.id, now_ts=now_ts, free_limit=audio_free_limit
+        redis, user_id=user.id, now_ts=now_ts, free_limit=audio_free_limit
     )
 
     photo_free_limit = int(getattr(request.app.state.config, "PHOTO_CREDITS_FREE_AUTH", 0) or 0)
     photo_status = await get_domain_status(
-        request.app.state.redis, domain="photo", subject_id=user.id, free_limit=photo_free_limit
+        redis, domain="photo", subject_id=user.id, free_limit=photo_free_limit
     )
 
     video_free_limit = int(getattr(request.app.state.config, "VIDEO_CREDITS_FREE_AUTH", 0) or 0)
     video_status = await get_domain_status(
-        request.app.state.redis, domain="video", subject_id=user.id, free_limit=video_free_limit
-    )
-
-    music_free_limit = int(getattr(request.app.state.config, "MUSIC_CREDITS_FREE_AUTH", 0) or 0)
-    music_status = await get_domain_status(
-        request.app.state.redis, domain="music", subject_id=user.id, free_limit=music_free_limit
+        redis, domain="video", subject_id=user.id, free_limit=video_free_limit
     )
 
     photo_cost = int(getattr(request.app.state.config, "PHOTO_CREDITS_COST", 0) or 0)
     video_cost = int(getattr(request.app.state.config, "VIDEO_CREDITS_COST", 0) or 0)
-    music_cost = int(getattr(request.app.state.config, "MUSIC_CREDITS_COST", 0) or 0)
-
-    photo_paid_remaining = (
-        int(photo_status.paid_balance) // photo_cost if photo_cost > 0 else int(photo_status.paid_balance)
-    )
-    video_paid_remaining = (
-        int(video_status.paid_balance) // video_cost if video_cost > 0 else int(video_status.paid_balance)
-    )
-    music_paid_remaining = (
-        int(music_status.paid_balance) // music_cost if music_cost > 0 else int(music_status.paid_balance)
-    )
 
     return CreditsStatusResponse(
         redis_available=redis_available,
@@ -268,39 +288,27 @@ async def credits_status(request: Request, user: UserModel = Depends(get_verifie
             ),
             "photo": DomainCreditsStatusResponse(
                 enforced=enforced,
-                unit="generations",
+                unit="credits",
                 cost=photo_cost if photo_cost > 0 else None,
                 free_used=int(photo_status.free_used),
                 free_limit=int(photo_status.free_limit),
                 free_remaining=int(photo_status.free_remaining),
                 paid_balance=int(photo_status.paid_balance),
-                paid_remaining=int(photo_paid_remaining),
-                total_remaining=int(photo_status.free_remaining) + int(photo_paid_remaining),
+                paid_remaining=int(photo_status.paid_balance),
+                total_remaining=int(photo_status.free_remaining) + int(photo_status.paid_balance),
                 packages=photo_packages,
             ),
             "video": DomainCreditsStatusResponse(
                 enforced=enforced,
-                unit="generations",
+                unit="credits",
                 cost=video_cost if video_cost > 0 else None,
                 free_used=int(video_status.free_used),
                 free_limit=int(video_status.free_limit),
                 free_remaining=int(video_status.free_remaining),
                 paid_balance=int(video_status.paid_balance),
-                paid_remaining=int(video_paid_remaining),
-                total_remaining=int(video_status.free_remaining) + int(video_paid_remaining),
+                paid_remaining=int(video_status.paid_balance),
+                total_remaining=int(video_status.free_remaining) + int(video_status.paid_balance),
                 packages=video_packages,
-            ),
-            "music": DomainCreditsStatusResponse(
-                enforced=enforced,
-                unit="generations",
-                cost=music_cost if music_cost > 0 else None,
-                free_used=int(music_status.free_used),
-                free_limit=int(music_status.free_limit),
-                free_remaining=int(music_status.free_remaining),
-                paid_balance=int(music_status.paid_balance),
-                paid_remaining=int(music_paid_remaining),
-                total_remaining=int(music_status.free_remaining) + int(music_paid_remaining),
-                packages=music_packages,
             ),
         },
     )
@@ -322,7 +330,11 @@ async def create_checkout(
     if not webhook_secret:
         raise HTTPException(status_code=503, detail="Stripe webhook is not configured.")
 
-    if request.app.state.redis is None:
+    redis = request.app.state.redis
+    if redis is None:
+        redis = await ensure_async_redis(request.app, max_attempts=1)
+
+    if redis is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Credits system is not available.",

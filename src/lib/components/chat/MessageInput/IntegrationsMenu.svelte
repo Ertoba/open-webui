@@ -386,14 +386,22 @@
 						{/each}
 					{/if}
 
-						{#if showWebSearchButton && !activeGenerationMode}
+						{#if showWebSearchButton}
 							<Tooltip content={$i18n.t('Search the internet')} placement="top-start">
 								<button
 									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 									on:click={() => {
-									webSearchEnabled = !webSearchEnabled;
-								}}
-							>
+										const next = !webSearchEnabled;
+										if (next) {
+											musicEnabled = false;
+											musicUnavailableMessage = '';
+											videoEnabled = false;
+											videoUnavailableMessage = '';
+											pyPhotoEnabled = false;
+										}
+										webSearchEnabled = next;
+									}}
+								>
 								<div class="flex-1 truncate">
 									<div class="flex flex-1 gap-2 items-center">
 										<div class="shrink-0">
@@ -417,14 +425,22 @@
 						</Tooltip>
 					{/if}
 
-						{#if showImageGenerationButton && !activeGenerationMode}
+						{#if showImageGenerationButton}
 							<Tooltip content={$i18n.t('Generate an image')} placement="top-start">
 								<button
 									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 									on:click={() => {
-									imageGenerationEnabled = !imageGenerationEnabled;
-								}}
-							>
+										const next = !imageGenerationEnabled;
+										if (next) {
+											musicEnabled = false;
+											musicUnavailableMessage = '';
+											videoEnabled = false;
+											videoUnavailableMessage = '';
+											pyPhotoEnabled = false;
+										}
+										imageGenerationEnabled = next;
+									}}
+								>
 								<div class="flex-1 truncate">
 									<div class="flex flex-1 gap-2 items-center">
 										<div class="shrink-0">
@@ -448,7 +464,7 @@
 						</Tooltip>
 					{/if}
 
-						{#if showCodeInterpreterButton && !activeGenerationMode}
+						{#if showCodeInterpreterButton}
 							<Tooltip content={$i18n.t('Execute code for analysis')} placement="top-start">
 								<button
 									class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
@@ -457,7 +473,15 @@
 									? $i18n.t('Disable Code Interpreter')
 									: $i18n.t('Enable Code Interpreter')}
 								on:click={() => {
-									codeInterpreterEnabled = !codeInterpreterEnabled;
+									const next = !codeInterpreterEnabled;
+									if (next) {
+										musicEnabled = false;
+										musicUnavailableMessage = '';
+										videoEnabled = false;
+										videoUnavailableMessage = '';
+										pyPhotoEnabled = false;
+									}
+									codeInterpreterEnabled = next;
 								}}
 							>
 								<div class="flex-1 truncate">
@@ -483,7 +507,7 @@
 						</Tooltip>
 					{/if}
 
-						{#if canUseDownloadVoice() && !activeGenerationMode}
+						{#if canUseDownloadVoice()}
 							<div>
 								<Tooltip content={$i18n.t('Generate and download a voice version')} placement="top-start">
 									<button
@@ -509,6 +533,11 @@
 										}
 
 										downloadVoiceUnavailableMessage = '';
+										musicEnabled = false;
+										musicUnavailableMessage = '';
+										videoEnabled = false;
+										videoUnavailableMessage = '';
+										pyPhotoEnabled = false;
 										downloadVoiceEnabled = true;
 									}}
 								>
@@ -560,7 +589,7 @@
 						</div>
 					{/if}
 
-						{#if musicStatus?.enabled && !activeGenerationMode}
+						{#if musicStatus?.enabled}
 							<div>
 								<Tooltip content={$i18n.t('Generate music from your prompt')} placement="top-start">
 									<button
@@ -589,6 +618,7 @@
 										musicEnabled = true;
 										videoEnabled = false;
 										videoUnavailableMessage = '';
+										pyPhotoEnabled = false;
 									}}
 								>
 									<div class="flex-1 truncate">
@@ -620,7 +650,6 @@
 							</div>
 						{/if}
 
-						{#if !activeGenerationMode}
 							<div>
 								<Tooltip content={$i18n.t('Generate a 1:1 PNG from assistant text')} placement="top-start">
 									<button
@@ -628,7 +657,14 @@
 										aria-pressed={pyPhotoEnabled}
 										aria-label={$i18n.t('PY Photo')}
 										on:click={() => {
-											pyPhotoEnabled = !pyPhotoEnabled;
+											const next = !pyPhotoEnabled;
+											if (next) {
+												musicEnabled = false;
+												musicUnavailableMessage = '';
+												videoEnabled = false;
+												videoUnavailableMessage = '';
+											}
+											pyPhotoEnabled = next;
 										}}
 									>
 										<div class="flex-1 truncate">
@@ -652,9 +688,7 @@
 									</button>
 								</Tooltip>
 							</div>
-						{/if}
 
-						{#if !activeGenerationMode}
 							<div>
 								<Tooltip content={$i18n.t('Generate video from your prompt')} placement="top-start">
 									<button
@@ -683,6 +717,7 @@
 											videoEnabled = true;
 											musicEnabled = false;
 											musicUnavailableMessage = '';
+											pyPhotoEnabled = false;
 										}}
 									>
 										<div class="flex-1 truncate">
@@ -712,9 +747,8 @@
 									</div>
 								{/if}
 							</div>
-						{/if}
 
-						{#if pdfStatus?.enabled && !activeGenerationMode}
+						{#if pdfStatus?.enabled}
 							<div>
 								<Tooltip content={$i18n.t('Generate a PDF from assistant text')} placement="top-start">
 									<button
@@ -733,6 +767,11 @@
 											return;
 										}
 
+										musicEnabled = false;
+										musicUnavailableMessage = '';
+										videoEnabled = false;
+										videoUnavailableMessage = '';
+										pyPhotoEnabled = false;
 										pdfEnabled = true;
 									}}
 								>
